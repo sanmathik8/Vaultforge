@@ -111,16 +111,13 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - name: Run OSV-Scanner
+      - name: Install and Run OSV-Scanner
         id: osv
         continue-on-error: true
-        uses: google/osv-scanner-action@v1.9.2
-        with:
-          scan-args: |-
-            --output=osv-results.sarif
-            --format=sarif
-            -r
-            ${{ env.APP_PATH }}
+        run: |
+          curl -sfL https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_1.9.2_linux_amd64 -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --output=osv-results.sarif --format=sarif -r ${{ env.APP_PATH }} || true
       - name: Upload OSV SARIF
         if: always() && hashFiles('osv-results.sarif') != ''
         continue-on-error: true
