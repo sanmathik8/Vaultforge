@@ -71,7 +71,7 @@ jobs:
           terraform validate
 
   # ---------------------------------------------------------------
-  # ECS Fargate Deployment & Rollout Checkpoint (Dynamic AWS Discovery)
+  # ECS Fargate Deployment & Rollout Checkpoint (Tag-Based AWS Discovery)
   # ---------------------------------------------------------------
   deploy:
     name: Deploy to ECS Fargate
@@ -109,27 +109,55 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
           audience: sts.amazonaws.com
 
-      - name: Dynamic AWS Infrastructure Metadata Discovery
+      - name: Tag-Based AWS Infrastructure Discovery
         id: discover-infra
         if: steps.check-preconditions.outputs.configured == 'true'
         run: |
-          # Discover ECS Cluster Name
-          CLUSTER_NAME=$(aws ecs list-clusters --query 'clusterArns[0]' --output text 2>/dev/null | awk -F'/' '{print $2}' || echo "")
-          if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
+          # 1. Discover ECS Cluster tagged with Project=VaultForge
+          CLUSTER_ARN=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge \
+            --resource-type-filters ecs:cluster \
+            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+
+          if [ -n "$CLUSTER_ARN" ] && [ "$CLUSTER_ARN" != "None" ]; then
+            CLUSTER_NAME=$(echo "$CLUSTER_ARN" | awk -F'/' '{print $2}')
+          else
             CLUSTER_NAME="vault-forge"
           fi
 
-          # Discover ALB DNS Name
-          ALB_DNS=$(aws elbv2 describe-load-balancers --names vault-forge-alb --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
+          # 2. Discover ALB DNS Name tagged with Project=VaultForge
+          ALB_ARN=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge \
+            --resource-type-filters elasticloadbalancing:loadbalancer \
+            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+
+          if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+            ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
+          else
+            ALB_DNS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
+          fi
+
+          # 3. Discover ECS Service Name tagged with Project=VaultForge
+          SERVICE_ARN=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge \
+            --resource-type-filters ecs:service \
+            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+
+          if [ -n "$SERVICE_ARN" ] && [ "$SERVICE_ARN" != "None" ]; then
+            SERVICE_NAME=$(echo "$SERVICE_ARN" | awk -F'/' '{print $3}')
+          else
+            SERVICE_NAME=$(aws ecs list-services --cluster "$CLUSTER_NAME" --query 'serviceArns[0]' --output text 2>/dev/null | awk -F'/' '{print $3}' || echo "vault-forge-app")
+          fi
 
           echo "cluster_name=$CLUSTER_NAME" >> "$GITHUB_OUTPUT"
+          echo "service_name=$SERVICE_NAME" >> "$GITHUB_OUTPUT"
           echo "alb_dns=$ALB_DNS" >> "$GITHUB_OUTPUT"
-          echo "service_name=vault-forge-app" >> "$GITHUB_OUTPUT"
 
-          echo "### 🔍 Discovered AWS Infrastructure Metadata" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Tag-Based AWS Infrastructure Discovered" >> $GITHUB_STEP_SUMMARY
           echo "- **ECS Cluster**: \`${CLUSTER_NAME}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **ECS Service**: \`vault-forge-app\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **ALB DNS Name**: \`${ALB_DNS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **ECS Service**: \`${SERVICE_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **ALB Endpoint**: \`${ALB_DNS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Filter**: \`Project=VaultForge\` via AWS Resource Groups Tagging API" >> $GITHUB_STEP_SUMMARY
 
       - name: Install Cosign
         if: steps.check-preconditions.outputs.configured == 'true'
@@ -144,7 +172,8 @@ jobs:
         if: steps.check-preconditions.outputs.configured == 'true'
         run: |
           CLUSTER="${{ steps.discover-infra.outputs.cluster_name }}"
-          ACTIVE_TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER" --services vault-forge-app --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          SERVICE="${{ steps.discover-infra.outputs.service_name }}"
+          ACTIVE_TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
           
           if [ -n "$ACTIVE_TASK_DEF" ] && [ "$ACTIVE_TASK_DEF" != "None" ]; then
             ACTIVE_IMAGE=$(aws ecs describe-task-definition --task-definition "$ACTIVE_TASK_DEF" --query 'taskDefinition.containerDefinitions[0].image' --output text 2>/dev/null || echo "")
@@ -155,7 +184,7 @@ jobs:
           if [ "$ACTIVE_IMAGE" = "${{ inputs.image_digest }}" ]; then
             echo "already_deployed=true" >> "$GITHUB_OUTPUT"
             echo "### ⏩ ECS Deployment Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
-            echo "ECS Service \`vault-forge-app\` is already running target image digest \`${{ inputs.image_digest }}\`. Skipping duplicate rollout." >> $GITHUB_STEP_SUMMARY
+            echo "ECS Service \`${SERVICE}\` is already running target image digest \`${{ inputs.image_digest }}\`. Skipping duplicate rollout." >> $GITHUB_STEP_SUMMARY
           else
             echo "already_deployed=false" >> "$GITHUB_OUTPUT"
           fi
@@ -180,12 +209,14 @@ jobs:
         continue-on-error: true
         run: |
           CLUSTER="${{ steps.discover-infra.outputs.cluster_name }}"
-          aws ecs update-service --cluster $CLUSTER --service vault-forge-app --task-definition ${{ steps.register-taskdef.outputs.task_def_arn }} --force-new-deployment
-          aws ecs wait services-stable --cluster $CLUSTER --services vault-forge-app
+          SERVICE="${{ steps.discover-infra.outputs.service_name }}"
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --task-definition ${{ steps.register-taskdef.outputs.task_def_arn }} --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
 
       - name: Application health check via ALB
         if: steps.check-preconditions.outputs.configured == 'true'
         run: |
           CLUSTER="${{ steps.discover-infra.outputs.cluster_name }}"
+          SERVICE="${{ steps.discover-infra.outputs.service_name }}"
           echo "Verifying ECS service status..."
-          aws ecs describe-services --cluster $CLUSTER --services vault-forge-app
+          aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE"

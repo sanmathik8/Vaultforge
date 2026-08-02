@@ -36,10 +36,10 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Checkpoint 1 & Metadata Discovery: ECR Repository URI
+  # Checkpoint 1 & Metadata Discovery: Tag-Based ECR Repository URI
   # ---------------------------------------------------------------
   check-ecr-checkpoint:
-    name: AWS Metadata Discovery & ECR Checkpoint
+    name: Tag-Based AWS Discovery & ECR Checkpoint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -71,22 +71,35 @@ jobs:
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
           audience: sts.amazonaws.com
 
-      - name: Dynamic AWS Infrastructure Metadata Discovery
+      - name: Tag-Based AWS Infrastructure Discovery
         id: discover
         if: steps.check-secrets.outputs.configured == 'true'
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION="${{ inputs.aws_region || 'ap-south-1' }}"
-          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
-          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          # Discover ECR repository tagged with Project=VaultForge
+          ECR_ARN=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge \
+            --resource-type-filters ecr:repository \
+            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+
+          if [ -n "$ECR_ARN" ] && [ "$ECR_ARN" != "None" ]; then
+            REPO_NAME=$(echo "$ECR_ARN" | sed 's|.*repository/||')
+            ACCOUNT_ID=$(echo "$ECR_ARN" | cut -d':' -f5)
+            REGION=$(echo "$ECR_ARN" | cut -d':' -f4)
+            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          else
+            REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            REGION="${{ inputs.aws_region || 'ap-south-1' }}"
+            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          fi
 
           echo "ecr_url=$ECR_URL" >> "$GITHUB_OUTPUT"
           echo "ecr_url=$ECR_URL" >> "$GITHUB_ENV"
+          echo "repo_name=$REPO_NAME" >> "$GITHUB_OUTPUT"
 
-          echo "### 🔍 Dynamic AWS Metadata Discovered" >> $GITHUB_STEP_SUMMARY
-          echo "- **AWS Account ID**: \`${ACCOUNT_ID}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **AWS Region**: \`${REGION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Tag-Based AWS Metadata Discovered" >> $GITHUB_STEP_SUMMARY
           echo "- **ECR Repository URI**: \`${ECR_URL}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Discovery Method**: AWS Resource Groups Tagging API (\`Project=VaultForge\`)" >> $GITHUB_STEP_SUMMARY
 
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'
@@ -96,7 +109,7 @@ jobs:
         id: ecr-check
         if: steps.check-secrets.outputs.configured == 'true'
         run: |
-          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+          REPO_NAME="${{ steps.discover.outputs.repo_name }}"
           TAG="${{ github.sha }}"
           ECR_URL="${{ steps.discover.outputs.ecr_url }}"
           EXISTING_DIGEST=$(aws ecr describe-images --repository-name "$REPO_NAME" --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
@@ -257,14 +270,11 @@ jobs:
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
           audience: sts.amazonaws.com
 
-      - name: Dynamic ECR Repository Discovery
+      - name: Tag-Based ECR Repository Discovery
         id: discover-ecr
         if: steps.check-secrets.outputs.configured == 'true'
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION="${{ inputs.aws_region || 'ap-south-1' }}"
-          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
-          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          ECR_URL="${{ needs.check-ecr-checkpoint.outputs.ecr_repository_url }}"
           echo "ecr_url=$ECR_URL" >> "$GITHUB_OUTPUT"
 
       - name: Login to Amazon ECR

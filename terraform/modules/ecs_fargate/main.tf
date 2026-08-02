@@ -20,6 +20,7 @@ data "aws_subnets" "default" {
 # --- 1. ECS Cluster & CloudWatch Logs ----------------------------------------
 resource "aws_ecs_cluster" "app" {
   name = var.cluster_name
+  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   setting {
     name  = "containerInsights"
@@ -30,11 +31,13 @@ resource "aws_ecs_cluster" "app" {
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/ecs/${var.cluster_name}-app"
   retention_in_days = 30
+  tags              = { Project = "VaultForge", ManagedBy = "Terraform" }
 }
 
 # --- 2. IAM Roles -------------------------------------------------------------
 resource "aws_iam_role" "task_execution" {
   name = "${var.cluster_name}-ecs-execution-role"
+  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -52,6 +55,7 @@ resource "aws_iam_role_policy_attachment" "task_execution" {
 
 resource "aws_iam_role" "task_role" {
   name = "${var.cluster_name}-ecs-task-role"
+  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -62,14 +66,15 @@ resource "aws_iam_role" "task_role" {
   })
 }
 
-# --- 3. Networking & Security Groups -----------------------------------------
+# --- 3. Security Groups ------------------------------------------------------
 resource "aws_security_group" "alb" {
   name        = "${var.cluster_name}-alb-sg"
-  description = "Security group for Application Load Balancer"
+  description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
+  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   ingress {
-    description = "HTTP Ingress"
+    description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -86,8 +91,9 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "ecs_tasks" {
   name        = "${var.cluster_name}-ecs-tasks-sg"
-  description = "Allow inbound traffic from ALB only"
+  description = "Allow inbound from ALB only"
   vpc_id      = data.aws_vpc.default.id
+  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   ingress {
     description     = "HTTP from ALB"
@@ -112,6 +118,7 @@ resource "aws_lb" "main" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
+  tags               = { Project = "VaultForge", ManagedBy = "Terraform" }
 }
 
 resource "aws_lb_target_group" "app" {
@@ -120,6 +127,7 @@ resource "aws_lb_target_group" "app" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
+  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   health_check {
     path                = "/health"
@@ -153,6 +161,7 @@ resource "aws_ecs_task_definition" "app" {
   memory                   = "512"
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = aws_iam_role.task_role.arn
+  tags                     = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   container_definitions = jsonencode([{
     name      = "vault-forge-app"
@@ -171,6 +180,7 @@ resource "aws_ecs_task_definition" "app" {
     mountPoints = [{
       sourceVolume  = "tmp-dir"
       containerPath = "/tmp"
+      readOnly      = false
     }]
 
     logConfiguration = {
@@ -196,6 +206,7 @@ resource "aws_ecs_service" "app" {
   launch_type                        = "FARGATE"
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
+  tags                               = { Project = "VaultForge", ManagedBy = "Terraform" }
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids
@@ -230,10 +241,11 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
 
   target_tracking_scaling_policy_configuration {
     target_value = 70.0
-
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
   }
 }
 
@@ -246,13 +258,16 @@ resource "aws_appautoscaling_policy" "ecs_policy_memory" {
 
   target_tracking_scaling_policy_configuration {
     target_value = 80.0
-
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageMemoryUtilization"
     }
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
   }
 }
 
 output "cluster_name" { value = aws_ecs_cluster.app.name }
 output "service_name" { value = aws_ecs_service.app.name }
 output "alb_dns_name" { value = aws_lb.main.dns_name }
+output "task_execution_role_arn" { value = aws_iam_role.task_execution.arn }
+output "task_role_arn" { value = aws_iam_role.task_role.arn }
