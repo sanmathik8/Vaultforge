@@ -15,6 +15,9 @@ on:
       already_deployed:
         type: string
         default: "false"
+      alb_dns_name:
+        type: string
+        default: ""
 
 concurrency:
   group: vaultforge-validate-${{ inputs.overlay }}
@@ -53,7 +56,9 @@ jobs:
 
       - name: Smoke tests
         if: steps.check-checkpoint.outputs.run_validation == 'true' && inputs.rollout_result == 'success'
-        run: ./scripts/smoke-test.sh ${{ inputs.overlay }}
+        run: |
+          TARGET="${{ inputs.alb_dns_name || 'localhost:8000' }}"
+          ./scripts/smoke-test.sh "$TARGET"
         continue-on-error: true
 
       - name: Run ZAP baseline scan (DAST)
@@ -62,7 +67,7 @@ jobs:
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: 'http://localhost:8000'
+          target: 'http://${{ inputs.alb_dns_name || "localhost:8000" }}'
 
       - name: Upload ZAP SARIF
         if: always() && hashFiles('report_html.html') != ''
@@ -98,5 +103,5 @@ jobs:
           echo "| Stage | Result | Details |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|---| " >> $GITHUB_STEP_SUMMARY
           echo "| Rollout | \`${{ inputs.rollout_result }}\` | Environment: \`${{ inputs.overlay }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| ZAP DAST | \`${{ steps.zap.outcome || 'skipped' }}\` | Target: \`http://vault-forge-app\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| ZAP DAST | \`${{ steps.zap.outcome || 'skipped' }}\` | Target: \`http://${{ inputs.alb_dns_name || 'vault-forge-app' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Image Digest | \`${{ inputs.image_digest || 'n/a' }}\` | Signed via Cosign |" >> $GITHUB_STEP_SUMMARY

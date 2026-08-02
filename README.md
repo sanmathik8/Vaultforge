@@ -39,12 +39,17 @@ VaultForge/
    decoupled from the app deploy pipeline — it runs only via
    `infra-bootstrap.yml`, never on a routine app push.
 
-## Required repo secrets / variables
+## Single-Secret Architecture & Dynamic Infrastructure Discovery
 
-| Name | Used by | Purpose |
-|---|---|---|
-| `AWS_ROLE_TO_ASSUME` | build.yml / deploy.yml | OIDC role, ECR push & ECS deploy |
-| `AWS_TERRAFORM_ROLE_ARN` | infra-bootstrap.yml | OIDC role, infra apply |
-| `ECR_REPOSITORY_URL` | build.yml | Target ECR repo (from `terraform output`) |
-| `ECS_CLUSTER_NAME` | deploy.yml | Target ECS cluster name (`vault-forge`) |
-| `ALLOW_CRITICAL_CVES` (var) | security.yml / build.yml | Bypass Trivy/Semgrep gates for demo targets with known vulns (PyGoat) |
+VaultForge operates on an **Enterprise Single-Secret Policy**. Infrastructure metadata (ECR Repository URI, ECS Cluster Name, ECS Service Name, ALB DNS Name) is discovered automatically from AWS APIs after OpenID Connect (OIDC) authentication. **Developers do not copy infrastructure URLs into GitHub Secrets.**
+
+### GitHub Configuration Matrix
+
+| Name | Type | Purpose | How Value is Obtained |
+|---|---|---|---|
+| `AWS_ROLE_TO_ASSUME` | Secret | IAM Role ARN for OIDC authentication | From `terraform output cd_deploy_role_arn` |
+| `AWS_TERRAFORM_ROLE_ARN` | Secret | IAM Role ARN for manual IaC bootstrap | From `terraform output terraform_role_arn` |
+| `ALLOW_CRITICAL_CVES` | Variable | Bypass Trivy/Semgrep gates for PyGoat lab target | Set to `true` in GitHub Repository Variables |
+| `ECR_REPOSITORY_URL` | **Discovered** | Target ECR Repository URI | Auto-resolved from AWS Caller Identity & STS |
+| `ECS_CLUSTER_NAME` | **Discovered** | Target Amazon ECS Cluster | Auto-discovered via AWS ECS API (`aws ecs list-clusters`) |
+| `ALB_DNS_NAME` | **Discovered** | Target Application Load Balancer Endpoint | Auto-discovered via AWS ELBv2 API (`aws elbv2 describe-load-balancers`) |

@@ -93,4 +93,5 @@ jobs:
       overlay: ${{ inputs.overlay || 'dev' }}
       rollout_result: ${{ needs.deploy.outputs.rollout_result || 'skipped' }}
       already_deployed: ${{ needs.deploy.outputs.already_deployed || 'false' }}
+      alb_dns_name: ${{ needs.deploy.outputs.alb_dns_name || '' }}
     secrets: inherit

@@ -15,11 +15,11 @@ on:
     secrets:
       AWS_ROLE_TO_ASSUME:
         required: false
-      ECR_REPOSITORY_URL:
-        required: false
     outputs:
       image_digest:
         value: ${{ jobs.sign-and-push.outputs.image_digest || jobs.check-ecr-checkpoint.outputs.existing_digest }}
+      ecr_repository_url:
+        value: ${{ jobs.check-ecr-checkpoint.outputs.ecr_repository_url }}
 
 concurrency:
   group: vaultforge-build-${{ github.ref }}
@@ -36,10 +36,10 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Checkpoint 1: Check if Image already exists in ECR
+  # Checkpoint 1 & Metadata Discovery: ECR Repository URI
   # ---------------------------------------------------------------
   check-ecr-checkpoint:
-    name: Checkpoint - ECR Image Check
+    name: AWS Metadata Discovery & ECR Checkpoint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -48,16 +48,16 @@ jobs:
     outputs:
       image_exists: ${{ steps.ecr-check.outputs.image_exists }}
       existing_digest: ${{ steps.ecr-check.outputs.existing_digest }}
+      ecr_repository_url: ${{ steps.discover.outputs.ecr_url }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check AWS credentials configured
+      - name: Check AWS role secret configured
         id: check-secrets
         env:
           AWS_ROLE: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          ECR_URL: ${{ secrets.ECR_REPOSITORY_URL }}
         run: |
-          if [ -z "$AWS_ROLE" ] || [ -z "$ECR_URL" ]; then
+          if [ -z "$AWS_ROLE" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -71,6 +71,23 @@ jobs:
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
           audience: sts.amazonaws.com
 
+      - name: Dynamic AWS Infrastructure Metadata Discovery
+        id: discover
+        if: steps.check-secrets.outputs.configured == 'true'
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ inputs.aws_region || 'ap-south-1' }}"
+          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+
+          echo "ecr_url=$ECR_URL" >> "$GITHUB_OUTPUT"
+          echo "ecr_url=$ECR_URL" >> "$GITHUB_ENV"
+
+          echo "### 🔍 Dynamic AWS Metadata Discovered" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Account ID**: \`${ACCOUNT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Region**: \`${REGION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **ECR Repository URI**: \`${ECR_URL}\`" >> $GITHUB_STEP_SUMMARY
+
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'
         uses: aws-actions/amazon-ecr-login@v2
@@ -81,10 +98,11 @@ jobs:
         run: |
           REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
           TAG="${{ github.sha }}"
+          ECR_URL="${{ steps.discover.outputs.ecr_url }}"
           EXISTING_DIGEST=$(aws ecr describe-images --repository-name "$REPO_NAME" --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
 
           if [ -n "$EXISTING_DIGEST" ] && [ "$EXISTING_DIGEST" != "None" ]; then
-            FULL_DIGEST="${{ secrets.ECR_REPOSITORY_URL }}@${EXISTING_DIGEST}"
+            FULL_DIGEST="${ECR_URL}@${EXISTING_DIGEST}"
             echo "image_exists=true" >> "$GITHUB_OUTPUT"
             echo "existing_digest=$FULL_DIGEST" >> "$GITHUB_OUTPUT"
             echo "### ⏩ ECR Image Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
@@ -224,9 +242,8 @@ jobs:
         id: check-secrets
         env:
           AWS_ROLE: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          ECR_URL: ${{ secrets.ECR_REPOSITORY_URL }}
         run: |
-          if [ -z "$AWS_ROLE" ] || [ -z "$ECR_URL" ]; then
+          if [ -z "$AWS_ROLE" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -240,6 +257,16 @@ jobs:
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
           audience: sts.amazonaws.com
 
+      - name: Dynamic ECR Repository Discovery
+        id: discover-ecr
+        if: steps.check-secrets.outputs.configured == 'true'
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ inputs.aws_region || 'ap-south-1' }}"
+          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          echo "ecr_url=$ECR_URL" >> "$GITHUB_OUTPUT"
+
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'
         uses: aws-actions/amazon-ecr-login@v2
@@ -250,9 +277,10 @@ jobs:
         run: |
           uses: actions/download-artifact@v4
           docker load -i image.tar
-          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
-          docker push ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }})
+          ECR_URL="${{ steps.discover-ecr.outputs.ecr_url }}"
+          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${ECR_URL}:${{ github.sha }}
+          docker push ${ECR_URL}:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${ECR_URL}:${{ github.sha }})
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install Cosign
