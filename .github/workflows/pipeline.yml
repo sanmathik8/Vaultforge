@@ -2,9 +2,9 @@ name: VaultForge Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'scratch/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'scratch/**']
 
 jobs:
   ci:
