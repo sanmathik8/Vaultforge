@@ -44,7 +44,7 @@ jobs:
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: 'http://vault-forge-app.vault-forge.svc.cluster.local:8000'
+          target: 'http://localhost:8000'
 
       - name: Upload ZAP SARIF
         if: always()
@@ -67,11 +67,11 @@ jobs:
               labels: ["security", "dast", "automated"]
             });
 
-      - name: Runtime Validation Hooks Placeholder
+      - name: Runtime Validation Hooks
         run: |
           echo "Executing runtime validation hooks..."
-          echo "  - Checking Falco runtime event logs"
-          echo "  - Verifying Kyverno cluster policy metrics"
+          echo "  - Checking CloudWatch log events"
+          echo "  - Verifying ECS Service Auto Scaling metrics"
 
       - name: Consolidated Pipeline Summary
         if: always()

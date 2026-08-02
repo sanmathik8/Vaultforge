@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       overlay:
-        description: 'Target Kubernetes overlay'
+        description: 'Target environment overlay'
         required: true
         default: 'dev'
         type: choice
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------
-  # 1. Security Scanning (SAST, SCA, Linters, Manifest Validation)
+  # 1. Security Scanning (SAST, SCA, Linters, TaskDef Validation)
   # ---------------------------------------------------------------
   security:
     name: Security & Quality
@@ -45,7 +45,7 @@ jobs:
     secrets: inherit
 
   # ---------------------------------------------------------------
-  # 3. Infrastructure Validation & Kubernetes Deployment
+  # 3. Infrastructure Validation & ECS Fargate Deployment
   # ---------------------------------------------------------------
   deploy:
     name: Infrastructure & CD Deploy

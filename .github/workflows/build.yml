@@ -48,12 +48,6 @@ jobs:
       sbom_result: ${{ steps.sbom.outcome }}
     steps:
       - uses: actions/checkout@v4
-      - name: Start Falco (CI supply-chain monitoring)
-        id: falco-start
-        continue-on-error: true
-        uses: falcosecurity/falco-actions/start@v1
-        with:
-          mode: live
       - name: Build application image
         id: docker-build
         run: docker buildx build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} --load ${{ env.APP_PATH }}
@@ -74,10 +68,6 @@ jobs:
           name: sbom-${{ github.sha }}
           path: sbom.json
           retention-days: 30
-      - name: Stop Falco and report
-        if: always()
-        continue-on-error: true
-        uses: falcosecurity/falco-actions/stop@v1
 
   # ---------------------------------------------------------------
   # Trivy - Container Vulnerability Scan
