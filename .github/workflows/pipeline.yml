@@ -20,6 +20,8 @@ concurrency:
   group: vaultforge-pipeline-${{ github.ref }}
   cancel-in-progress: true
 
+# Top-Level Permission Ceiling: Superset of all permissions required by reusable sub-workflows.
+# Enforces strict least privilege — no 'write-all' or elevated admin scopes.
 permissions:
   contents: read
   id-token: write
