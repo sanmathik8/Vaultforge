@@ -11,6 +11,17 @@
   2. `kube-score` manifest validation fixed across `deployment.yaml` (ephemeral storage limits, user/group IDs >10000, `imagePullPolicy`, probe separation, pod anti-affinity) and kustomization overlays (static replicas removed for HPA compatibility).
   3. `/health` endpoint added to PyGoat application views for probes and smoke tests.
 
+## Phase 3 — Infrastructure as Code & Cloud Platform Audit
+- **Completed Components Identified**:
+  - Modular Terraform HCL structure (`terraform/bootstrap/` and `terraform/modules/` for `ecr`, `eks`, `oidc`).
+  - Amazon ECR Repository (`vault-forge-app`) with tag immutability, automated scan on push, and 7-day untagged lifecycle policy.
+  - Amazon EKS Cluster module with cost-conscious `t3.medium` managed node group and `AmazonEKSEditPolicy` IAM access entry scoped to `vault-forge` namespace.
+  - Keyless GitHub OIDC Provider (`token.actions.githubusercontent.com`) and least-privilege IAM Roles (`vault-forge-ci-ecr-push` and `vault-forge-cd-eks-deploy`).
+- **Missing / Partially Implemented Component Enhancements**:
+  - Aligned repository name casing in `terraform/bootstrap/variables.tf` (`sanmathik8/Vaultforge`).
+  - Added dedicated `vault-forge-terraform-bootstrap` IAM Role and output (`terraform_role_arn`) in `terraform/modules/oidc/main.tf` for IaC workflow execution.
+  - Expanded OIDC subject claim matching (`repo:sanmathik8/Vaultforge:*`) in `terraform/modules/oidc/main.tf` so both branch and environment triggers can authenticate via OIDC.
+
 ## Modular Enterprise Pipeline Refactoring
 
 Refactored the GitHub Actions workflow architecture from monolithic/duplicated files into an enterprise-grade, modular pipeline:

@@ -13,3 +13,7 @@ output "ci_push_role_arn" {
 output "cd_deploy_role_arn" {
   value = module.github_oidc.eks_deploy_role_arn
 }
+
+output "terraform_role_arn" {
+  value = module.github_oidc.terraform_role_arn
+}

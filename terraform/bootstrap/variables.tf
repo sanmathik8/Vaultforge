@@ -11,5 +11,5 @@ variable "cluster_name" {
 variable "github_repo" {
   description = "org/repo allowed to assume the CI/CD OIDC roles"
   type        = string
-  default     = "sanmathik8/vault-forge"
+  default     = "sanmathik8/Vaultforge"
 }

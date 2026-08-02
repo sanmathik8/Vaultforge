@@ -51,7 +51,7 @@ resource "aws_iam_role" "eks_deploy" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:environment:*" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
       }
     }]
   })
@@ -70,5 +70,36 @@ resource "aws_iam_role_policy" "eks_deploy" {
   })
 }
 
+# Role for Terraform IaC Bootstrap workflow (infra-bootstrap.yml)
+resource "aws_iam_role" "terraform_bootstrap" {
+  name = "vault-forge-terraform-bootstrap"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "terraform_bootstrap" {
+  name = "terraform-bootstrap"
+  role = aws_iam_role.terraform_bootstrap.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:*", "dynamodb:*", "ecr:*", "eks:*", "iam:*"]
+      Resource = "*"
+    }]
+  })
+}
+
 output "ecr_push_role_arn" { value = aws_iam_role.ecr_push.arn }
 output "eks_deploy_role_arn" { value = aws_iam_role.eks_deploy.arn }
+output "terraform_role_arn" { value = aws_iam_role.terraform_bootstrap.arn }
