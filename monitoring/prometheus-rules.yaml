@@ -1,0 +1,38 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vault-forge-alert-rules
+  namespace: vault-forge
+  labels:
+    app: vault-forge-app
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: vault-forge-application.rules
+      rules:
+        - alert: VaultForgeHighErrorRate
+          expr: sum(rate(http_requests_total{namespace="vault-forge", status=~"5.."}[5m])) / sum(rate(http_requests_total{namespace="vault-forge"}[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High HTTP 5xx error rate on VaultForge app (> 5%)"
+            description: "VaultForge application HTTP 5xx error rate exceeds 5% over the last 5 minutes."
+
+        - alert: VaultForgeHighLatency
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="vault-forge"}[5m])) by (le)) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High P95 latency on VaultForge app (> 2s)"
+            description: "VaultForge P95 latency is over 2 seconds for more than 5 minutes."
+
+        - alert: VaultForgePodRestarting
+          expr: rate(kube_pod_container_status_restarts_total{namespace="vault-forge"}[15m]) * 60 > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "VaultForge pod container restarting"
+            description: "Pod container in namespace vault-forge is crash-looping or restarting."

@@ -10,6 +10,7 @@ resources:
   - networkpolicy.yaml
   - poddisruptionbudget.yaml
   - hpa.yaml
+  - servicemonitor.yaml
 images:
   - name: vault-forge-app
     newName: vault-forge-app

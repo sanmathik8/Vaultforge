@@ -1,0 +1,42 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Falco Runtime Security Alerts",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(falco_events{namespace=\"vault-forge\"}[5m])) by (rule, priority)",
+          "legendFormat": "[{{priority}}] {{rule}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Kyverno Policy Violations",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(kyverno_policy_results_total{policy_validation_mode=\"enforce\"}) by (policy_name)",
+          "legendFormat": "{{policy_name}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["vault-forge", "security"],
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "VaultForge - Pipeline & Security Trends",
+  "uid": "vault-forge-security-trends"
+}

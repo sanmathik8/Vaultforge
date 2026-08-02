@@ -1,0 +1,66 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Request Rate (Traffic)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{namespace=\"vault-forge\"}[5m])) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP Error Rate (5xx Errors)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{namespace=\"vault-forge\", status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx Errors"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "P95 Request Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace=\"vault-forge\"}[5m])) by (le))",
+          "legendFormat": "P95 Latency"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Pod Memory & CPU Usage (Saturation)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"vault-forge\", container=\"vault-forge-app\"}) by (pod)",
+          "legendFormat": "{{pod}} Memory"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["vault-forge", "golden-signals"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "VaultForge App - Golden Signals",
+  "uid": "vault-forge-golden-signals"
+}

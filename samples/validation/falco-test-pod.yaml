@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: falco-test-pod
+  namespace: vault-forge
+  labels:
+    app: falco-test
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: falco-test-container
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+          ephemeral-storage: 50Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 100Mi
