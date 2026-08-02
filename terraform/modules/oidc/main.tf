@@ -27,10 +27,10 @@ resource "aws_iam_role" "ecr_push" {
       Condition = {
         StringLike = {
           "token.actions.githubusercontent.com:sub" = [
-            "repo:${var.github_repo}:*",
+            "repo:sanmathik8*:*",
+            "repo:sanmathik8@*:*",
             "repo:sanmathik8/Vaultforge:*",
-            "repo:sanmathik8/VaultForge:*",
-            "repo:sanmathik8/*"
+            "repo:sanmathik8/VaultForge:*"
           ]
         }
       }
@@ -76,10 +76,10 @@ resource "aws_iam_role" "eks_deploy" {
       Condition = {
         StringLike = {
           "token.actions.githubusercontent.com:sub" = [
-            "repo:${var.github_repo}:*",
+            "repo:sanmathik8*:*",
+            "repo:sanmathik8@*:*",
             "repo:sanmathik8/Vaultforge:*",
-            "repo:sanmathik8/VaultForge:*",
-            "repo:sanmathik8/*"
+            "repo:sanmathik8/VaultForge:*"
           ]
         }
       }
@@ -132,10 +132,10 @@ resource "aws_iam_role" "terraform_bootstrap" {
       Condition = {
         StringLike = {
           "token.actions.githubusercontent.com:sub" = [
-            "repo:${var.github_repo}:*",
+            "repo:sanmathik8*:*",
+            "repo:sanmathik8@*:*",
             "repo:sanmathik8/Vaultforge:*",
-            "repo:sanmathik8/VaultForge:*",
-            "repo:sanmathik8/*"
+            "repo:sanmathik8/VaultForge:*"
           ]
         }
       }
