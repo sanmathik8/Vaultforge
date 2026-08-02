@@ -20,10 +20,6 @@ on:
     outputs:
       image_digest:
         value: ${{ jobs.sign-and-push.outputs.image_digest }}
-  push:
-    branches: [main, 'scratch/**']
-  pull_request:
-    branches: [main, 'scratch/**']
 
 concurrency:
   group: vaultforge-ci-${{ github.ref }}
