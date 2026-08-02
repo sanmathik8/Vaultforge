@@ -73,3 +73,36 @@ The GitHub Actions pipeline is structured into a production-grade, modular archi
 - **`kubernetes/base/`**: Core workload manifests (`Deployment`, `Service`, `NetworkPolicy`, `HPA`, `PodDisruptionBudget`, `ServiceAccount`, `RBAC`, `ServiceMonitor`).
 - **`kubernetes/overlays/dev/`**: Development environment configuration (2 replicas min, dev annotations).
 - **`kubernetes/overlays/prod/`**: Production environment configuration (3-10 replicas HPA, production environment).
+
+---
+
+## 5. Architectural Agility & Targeted Migration Blueprint
+
+VaultForge's modular architecture cleanly separates **Supply Chain Security & Build** from **Container Runtime Deployment**. Should future business requirements or career preferences warrant migrating the container execution layer from Amazon EKS to **Amazon ECS (Fargate)**, the platform requires **zero pipeline redesign**:
+
+```
+                  ┌─────────────────────────────────────────────────────────┐
+                  │                 VaultForge Security & CI                │
+                  │   Gitleaks ──► Hadolint ──► Semgrep ──► OSV ──► Syft     │
+                  │          Buildx ──► Trivy ──► Cosign ──► ECR            │
+                  └────────────────────────────┬────────────────────────────┘
+                                               │ (Signed ECR Image Digest)
+                                               │
+                       ┌───────────────────────┴───────────────────────┐
+                       ▼                                               ▼
+         ┌───────────────────────────┐                   ┌───────────────────────────┐
+         │   Target Runtime A (EKS)  │                   │Target Runtime B (ECS/Fargate)│
+         │  Kustomize / kubectl      │                   │  TaskDef / ALB / ecs-deploy│
+         │  Kyverno / Falco / Prom   │                   │  AWS App Mesh / CloudWatch│
+         └───────────────────────────┘                   └───────────────────────────┘
+```
+
+### Components Preserved 100% During Migration
+- **CI & Security Pipeline**: `security.yml`, `build.yml`, Gitleaks, Hadolint, Semgrep, OSV-Scanner, Syft SBOM, Trivy, Cosign, SARIF uploads.
+- **Identity & Authentication**: GitHub OIDC federation and IAM role structure.
+- **Registry Platform**: Amazon ECR (Immutable tags, scan on push, lifecycle rules).
+- **Orchestration Engine**: `pipeline.yml` interface and `validate.yml` DAST/smoke testing.
+
+### Components Swapped at Deployment Layer
+- **Terraform Module**: Swap `modules/eks` with `modules/ecs_fargate` (Cluster, TaskDefinition, ALB, SecurityGroups).
+- **CD Workflow**: Update `deploy.yml` step to issue `aws ecs update-service --force-new-deployment` instead of `kubectl apply -k`.
