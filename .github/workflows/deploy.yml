@@ -71,7 +71,6 @@ jobs:
   deploy:
     name: Deploy to ECS Fargate
     needs: iac-validation
-    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && inputs.image_digest != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -83,31 +82,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check AWS credentials & image digest
+        id: check-preconditions
+        env:
+          AWS_ROLE: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          DIGEST: ${{ inputs.image_digest }}
+        run: |
+          if [ -z "$AWS_ROLE" ] || [ -z "$DIGEST" ]; then
+            echo "::warning::AWS_ROLE_TO_ASSUME secret or image_digest input missing. Skipping ECS deployment."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Configure AWS credentials via OIDC
+        if: steps.check-preconditions.outputs.configured == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region }}
 
       - name: Install Cosign
+        if: steps.check-preconditions.outputs.configured == 'true'
         uses: sigstore/cosign-installer@v3
 
       - name: Cosign verify (pre-deploy sanity check)
+        if: steps.check-preconditions.outputs.configured == 'true'
         run: cosign verify ${{ inputs.image_digest }} --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
       - name: Render Task Definition with signed image digest
+        if: steps.check-preconditions.outputs.configured == 'true'
         id: render-taskdef
         run: |
           sed 's|"vault-forge-app:placeholder"|"${{ inputs.image_digest }}"|g' ecs/task-definition.json > rendered-taskdef.json
           echo "Task definition rendered successfully"
 
       - name: Register ECS Task Definition
+        if: steps.check-preconditions.outputs.configured == 'true'
         id: register-taskdef
         run: |
           TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://rendered-taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
 
       - name: Update ECS Service (Rolling Deployment)
+        if: steps.check-preconditions.outputs.configured == 'true'
         id: rollout
         continue-on-error: true
         run: |
@@ -116,6 +134,7 @@ jobs:
           aws ecs wait services-stable --cluster $CLUSTER --services vault-forge-app
 
       - name: Application health check via ALB
+        if: steps.check-preconditions.outputs.configured == 'true'
         run: |
           CLUSTER=${{ secrets.ECS_CLUSTER_NAME || 'vault-forge' }}
           echo "Verifying ECS service status..."
