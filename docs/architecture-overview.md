@@ -5,46 +5,39 @@ VaultForge is a enterprise-grade DevSecOps platform demonstrating end-to-end sec
 
 ---
 
-## 2. Architectural Layers
+## 2. Enterprise Modular Workflow Architecture
+
+The GitHub Actions pipeline is structured into a production-grade, modular architecture:
+
+```text
+.github/workflows/
+├── pipeline.yml          ← Main Orchestrator (on: push, pull_request, workflow_dispatch)
+├── security.yml          ← Reusable Security Scanning (Gitleaks, Hadolint, Semgrep, OSV, kube-score)
+├── build.yml             ← Reusable Build & Container Security (Buildx, Syft SBOM, Trivy, Cosign Sign/Push)
+├── deploy.yml            ← Reusable IaC & Kubernetes Deployment (Checkov, Kustomize, Kyverno, Rollout/Undo)
+└── validate.yml          ← Reusable Post-Deploy Validation (Smoke tests, OWASP ZAP DAST, SARIF, Summary)
+```
 
 ```
-                               ┌──────────────────────────────────────────────┐
-                               │             GitHub Actions CI/CD             │
-                               │   (OIDC Federation - Least Privilege Role)   │
-                               └──────────────────────┬───────────────────────┘
-                                                      │
-                       ┌──────────────────────────────┴──────────────────────────────┐
-                       ▼                                                             ▼
-         ┌───────────────────────────┐                                 ┌───────────────────────────┐
-         │     Security Gates        │                                 │     Build & Sign          │
-         │ Gitleaks, Hadolint,      │                                 │ Docker Buildx, Syft SBOM, │
-         │ Semgrep, OSV, kube-score  │                                 │ Cosign Keyless OIDC Sign  │
-         └─────────────┬─────────────┘                                 └─────────────┬─────────────┘
-                       │                                                             │
-                       └──────────────────────────────┬──────────────────────────────┘
-                                                      ▼
-                                       ┌──────────────────────────────┐
-                                       │     Amazon ECR (Immutable)   │
-                                       └──────────────┬───────────────┘
-                                                      │
-                                                      ▼
-                                       ┌──────────────────────────────┐
-                                       │     Amazon EKS Cluster       │
-                                       │  (Private Subnets, KMS Enc)  │
-                                       └──────────────┬───────────────┘
-                                                      │
-       ┌──────────────────────────────────────────────┼──────────────────────────────────────────────┐
-       ▼                                              ▼                                              ▼
-┌──────────────────────────────┐            ┌──────────────────────────────┐            ┌──────────────────────────────┐
-│  Kyverno Policy Admission    │            │     Kubernetes Workload      │            │   Falco Runtime Security     │
-│  (Block Priv, Non-Root,      │            │ (PyGoat App, HPA, PDB, NP)   │            │   (eBPF Engine DaemonSet)    │
-│   Resource Limits, Signatures│            └──────────────┬───────────────┘            └──────────────┬───────────────┘
-└──────────────────────────────┘                           │                                           │
-                                                           ▼                                           ▼
-                                            ┌──────────────────────────────┐            ┌──────────────────────────────┐
-                                            │ kube-prometheus-stack        │            │ Falcosidekick Webhook        │
-                                            │ (Prometheus, Grafana, Alert) │            │ (Alerting & Incident Response│
-                                            └──────────────────────────────┘            └──────────────────────────────┘
+[ Developer Trigger ] (push / pull_request / workflow_dispatch)
+         │
+         ▼
+ ┌───────────────┐
+ │ pipeline.yml  │ ──(1. workflow_call)──► ┌───────────────┐
+ │ (Orchestrator)│                         │ security.yml  │ (SAST, SCA, Linters, kube-score)
+ └───────┬───────┘                         └───────────────┘
+         │
+         ├──(2. workflow_call)───────────► ┌───────────────┐
+         │                                 │   build.yml   │ (Docker Buildx, SBOM, Trivy, Cosign)
+         │                                 └───────────────┘
+         │
+         ├──(3. workflow_call)───────────► ┌───────────────┐
+         │                                 │  deploy.yml   │ (Checkov, Kustomize, Kyverno, Rollback)
+         │                                 └───────────────┘
+         │
+         └──(4. workflow_call)───────────► ┌───────────────┐
+                                           │ validate.yml  │ (Smoke test, OWASP ZAP DAST, Summary)
+                                           └───────────────┘
 ```
 
 ---
@@ -54,7 +47,11 @@ VaultForge is a enterprise-grade DevSecOps platform demonstrating end-to-end sec
 | Layer | Technology | Primary Function |
 |---|---|---|
 | **IaC** | Terraform 1.14+ | Provisions AWS EKS, ECR (immutable tags), KMS encryption, OIDC IAM roles. |
-| **CI Orchestrator** | GitHub Actions | Executes pipeline workflows (`pipeline.yml`, `ci-security.yml`, `cd-deploy.yml`). |
+| **Main Orchestrator** | `pipeline.yml` | Single entry point orchestrating modular reusable workflows via `workflow_call`. |
+| **Security Module** | `security.yml` | Gitleaks, Hadolint, Semgrep SAST, OSV-Scanner, kube-score manifest validation. |
+| **Build Module** | `build.yml` | Docker Buildx, Syft SBOM, Trivy image scan, keyless Cosign signing, ECR push. |
+| **Deploy Module** | `deploy.yml` | Checkov IaC scan, Terraform validation, Kustomize apply, Kyverno admission, auto-rollback. |
+| **Validation Module**| `validate.yml` | Smoke tests, OWASP ZAP DAST scan, SARIF uploads, GitHub issue creation, step summary. |
 | **Secrets Scanning** | Gitleaks v8 | Scans Git commits and tree for exposed credentials and tokens. |
 | **Linting** | Hadolint v3 | Enforces Dockerfile security best practices. |
 | **SAST** | Semgrep | Code vulnerability scanning (OWASP Top 10, Django, Python). |
@@ -75,4 +72,4 @@ VaultForge is a enterprise-grade DevSecOps platform demonstrating end-to-end sec
 
 - **`kubernetes/base/`**: Core workload manifests (`Deployment`, `Service`, `NetworkPolicy`, `HPA`, `PodDisruptionBudget`, `ServiceAccount`, `RBAC`, `ServiceMonitor`).
 - **`kubernetes/overlays/dev/`**: Development environment configuration (2 replicas min, dev annotations).
-- **`kubernetes/overlays/prod/`**: Production environment configuration (3-10 replicas HPA, production environment approval gate).
+- **`kubernetes/overlays/prod/`**: Production environment configuration (3-10 replicas HPA, production environment).

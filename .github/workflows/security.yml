@@ -1,0 +1,196 @@
+name: VaultForge Security - SAST, SCA & Manifest Validation
+
+on:
+  workflow_call:
+    inputs:
+      app_path:
+        type: string
+        default: ./app
+
+concurrency:
+  group: vaultforge-security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  APP_PATH: ${{ inputs.app_path || './app' }}
+
+jobs:
+  # ---------------------------------------------------------------
+  # Stage 1: Validate Dockerfile exists
+  # ---------------------------------------------------------------
+  validate-dockerfile:
+    name: Validate Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Dockerfile exists
+        run: |
+          if [ ! -f "${{ env.APP_PATH }}/Dockerfile" ]; then
+            echo "::error::No Dockerfile found at ${{ env.APP_PATH }}/Dockerfile"
+            echo "Run 'docker init' locally to generate a production-ready Dockerfile,"
+            echo "review it, commit it, and re-run the pipeline."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------
+  # Stage 2: Gitleaks Secrets Scan
+  # ---------------------------------------------------------------
+  secrets-scan:
+    name: Gitleaks - Secrets Scan
+    needs: validate-dockerfile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      result: ${{ steps.gitleaks.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan repository for secrets
+        id: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Handle failure
+        if: steps.gitleaks.outcome == 'failure'
+        uses: ./.github/actions/graceful-exit
+        with:
+          stage: "Gitleaks Secrets Scan"
+          reason: "Exposed secrets were found. Remove the secret and rotate it if it was ever pushed."
+
+  # ---------------------------------------------------------------
+  # Stage 3: Hadolint - Dockerfile Best Practices
+  # ---------------------------------------------------------------
+  dockerfile-lint:
+    name: Hadolint - Dockerfile Best Practices
+    needs: validate-dockerfile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Hadolint
+        id: hadolint
+        continue-on-error: true
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ env.APP_PATH }}/Dockerfile
+          format: sarif
+          output-file: hadolint.sarif
+      - name: Upload Hadolint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+  # ---------------------------------------------------------------
+  # Stage 4: OSV-Scanner - Dependency Vulnerability Scan
+  # ---------------------------------------------------------------
+  dependency-scan:
+    name: OSV-Scanner - Dependency Scan
+    needs: secrets-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run OSV-Scanner
+        id: osv
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@v1
+        with:
+          scan-args: |-
+            --output=osv-results.sarif
+            --format=sarif
+            -r
+            ${{ env.APP_PATH }}
+      - name: Upload OSV SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: osv-results.sarif
+          category: osv-scanner
+
+  # ---------------------------------------------------------------
+  # Stage 5: Semgrep - Static Application Security Testing (SAST)
+  # ---------------------------------------------------------------
+  sast-scan:
+    name: Semgrep - SAST
+    needs: secrets-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      critical_count: ${{ steps.count.outputs.critical }}
+      finding_count: ${{ steps.count.outputs.findings }}
+      result: ${{ steps.gate.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: pip install semgrep
+      - name: Run Semgrep scan
+        id: semgrep
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config=p/owasp-top-ten --config=p/django --config=p/python \
+            --sarif --output=semgrep.sarif \
+            --json --output=semgrep.json \
+            ${{ env.APP_PATH }}
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+      - name: Count findings
+        id: count
+        if: always()
+        run: |
+          COUNT=$(jq '.results | length' semgrep.json 2>/dev/null || echo 0)
+          CRIT=$(jq '[.results[]? | select(.extra.severity=="ERROR")] | length' semgrep.json 2>/dev/null || echo 0)
+          echo "findings=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "critical=$CRIT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep.json
+          retention-days: 30
+      - name: Gate on critical findings
+        id: gate
+        if: ${{ vars.ALLOW_CRITICAL_CVES != 'true' }}
+        run: |
+          CRIT=${{ steps.count.outputs.critical }}
+          if [ "$CRIT" -gt 0 ]; then
+            echo "::error::$CRIT critical-severity Semgrep finding(s). Failing build."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------
+  # Stage 6: kube-score - Kubernetes Manifest Validation
+  # ---------------------------------------------------------------
+  manifest-validation:
+    name: kube-score - Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kube-score
+        run: |
+          curl -sL https://github.com/zegl/kube-score/releases/latest/download/kube-score_linux_amd64 -o /usr/local/bin/kube-score
+          chmod +x /usr/local/bin/kube-score
+      - name: Build manifests with Kustomize
+        run: kubectl kustomize kubernetes/overlays/dev > rendered.yaml
+      - name: Run kube-score
+        run: kube-score score rendered.yaml --output-format ci

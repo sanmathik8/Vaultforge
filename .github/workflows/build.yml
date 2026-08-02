@@ -1,0 +1,186 @@
+name: VaultForge Build - Image, SBOM, Scan, Sign & Push
+
+on:
+  workflow_call:
+    inputs:
+      app_path:
+        type: string
+        default: ./app
+      image_name:
+        type: string
+        default: vault-forge-app
+      aws_region:
+        type: string
+        default: ap-south-1
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: false
+      ECR_REPOSITORY_URL:
+        required: false
+    outputs:
+      image_digest:
+        value: ${{ jobs.sign-and-push.outputs.image_digest }}
+
+concurrency:
+  group: vaultforge-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+env:
+  APP_PATH: ${{ inputs.app_path || './app' }}
+  IMAGE_NAME: ${{ inputs.image_name || 'vault-forge-app' }}
+
+jobs:
+  # ---------------------------------------------------------------
+  # Build Image & Generate SBOM
+  # ---------------------------------------------------------------
+  build-and-sbom:
+    name: Build Image + SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sbom_result: ${{ steps.sbom.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Falco (CI supply-chain monitoring)
+        id: falco-start
+        continue-on-error: true
+        uses: falcosecurity/falco-actions/start@main
+        with:
+          mode: live
+      - name: Build application image
+        id: docker-build
+        run: docker buildx build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} --load ${{ env.APP_PATH }}
+      - name: Save image for downstream jobs
+        run: docker save ${{ env.IMAGE_NAME }}:${{ github.sha }} -o image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: Generate SBOM
+        id: sbom
+        run: syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o cyclonedx-json=sbom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.json
+          retention-days: 30
+      - name: Stop Falco and report
+        if: always()
+        continue-on-error: true
+        uses: falcosecurity/falco-actions/stop@main
+
+  # ---------------------------------------------------------------
+  # Trivy - Container Vulnerability Scan
+  # ---------------------------------------------------------------
+  image-scan:
+    name: Trivy - Container Vulnerability Scan
+    needs: build-and-sbom
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      critical_count: ${{ steps.count.outputs.critical }}
+      high_count: ${{ steps.count.outputs.high }}
+      result: ${{ steps.gate.outcome }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+      - run: docker load -i image.tar
+      - name: Run Trivy scan (SARIF + JSON)
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+      - name: Run Trivy scan (JSON, for gate + counts)
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy image --severity CRITICAL,HIGH --format json --output trivy-report.json ${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Count findings
+        id: count
+        run: |
+          CRIT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-report.json 2>/dev/null || echo 0)
+          HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-report.json 2>/dev/null || echo 0)
+          echo "critical=$CRIT" >> "$GITHUB_OUTPUT"
+          echo "high=$HIGH" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          retention-days: 30
+      - name: Security Policy Gate
+        id: gate
+        if: ${{ vars.ALLOW_CRITICAL_CVES != 'true' }}
+        run: |
+          CRIT=${{ steps.count.outputs.critical }}
+          if [ "$CRIT" -gt 0 ]; then
+            echo "::error::$CRIT CRITICAL CVE(s) found. Blocking sign/push."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------
+  # Cosign Sign + Push to Amazon ECR
+  # ---------------------------------------------------------------
+  sign-and-push:
+    name: Cosign Sign + Push to ECR
+    needs: image-scan
+    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && secrets.ECR_REPOSITORY_URL != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+      - run: docker load -i image.tar
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and push image (by digest)
+        id: push
+        run: |
+          docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
+          docker push ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }})
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes ${{ steps.push.outputs.digest }}
+
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}

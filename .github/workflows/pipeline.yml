@@ -1,23 +1,73 @@
-name: VaultForge Pipeline
+name: VaultForge Enterprise DevSecOps Pipeline
 
 on:
   push:
     branches: [main, 'scratch/**']
   pull_request:
     branches: [main, 'scratch/**']
+  workflow_dispatch:
+    inputs:
+      overlay:
+        description: 'Target Kubernetes overlay'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+concurrency:
+  group: vaultforge-pipeline-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
-    name: CI
-    uses: ./.github/workflows/ci-security.yml
+  # ---------------------------------------------------------------
+  # 1. Security Scanning (SAST, SCA, Linters, Manifest Validation)
+  # ---------------------------------------------------------------
+  security:
+    name: Security & Quality
+    uses: ./.github/workflows/security.yml
+    with:
+      app_path: ./app
     secrets: inherit
 
-  cd:
-    name: CD
-    needs: ci
-    if: github.event_name == 'push' && needs.ci.outputs.image_digest != ''
-    uses: ./.github/workflows/cd-deploy.yml
+  # ---------------------------------------------------------------
+  # 2. Build, SBOM, Image Vulnerability Scanning & Signing
+  # ---------------------------------------------------------------
+  build:
+    name: Build & Container Security
+    needs: security
+    uses: ./.github/workflows/build.yml
     with:
-      image_digest: ${{ needs.ci.outputs.image_digest }}
-      overlay: dev
+      app_path: ./app
+      image_name: vault-forge-app
+      aws_region: ap-south-1
+    secrets: inherit
+
+  # ---------------------------------------------------------------
+  # 3. Infrastructure Validation & Kubernetes Deployment
+  # ---------------------------------------------------------------
+  deploy:
+    name: Infrastructure & CD Deploy
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      image_digest: ${{ needs.build.outputs.image_digest || '' }}
+      overlay: ${{ inputs.overlay || 'dev' }}
+      aws_region: ap-south-1
+    secrets: inherit
+
+  # ---------------------------------------------------------------
+  # 4. Post-Deployment Validation & DAST Scanning
+  # ---------------------------------------------------------------
+  validate:
+    name: Post-Deploy Validation & DAST
+    needs: [deploy, build]
+    if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/validate.yml
+    with:
+      image_digest: ${{ needs.build.outputs.image_digest || '' }}
+      overlay: ${{ inputs.overlay || 'dev' }}
+      rollout_result: ${{ needs.deploy.outputs.rollout_result || 'skipped' }}
     secrets: inherit
