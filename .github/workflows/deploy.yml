@@ -18,7 +18,9 @@ on:
       ECS_CLUSTER_NAME:
         required: false
     outputs:
-      rollout_result: ${{ jobs.deploy.outputs.rollout_result }}
+      rollout_result:
+        description: "Outcome of the rollout step"
+        value: ${{ jobs.deploy.outputs.rollout_result }}
 
 concurrency:
   group: vaultforge-deploy-${{ inputs.overlay }}
