@@ -69,6 +69,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
+          audience: sts.amazonaws.com
 
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'
@@ -237,10 +238,10 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
+          audience: sts.amazonaws.com
 
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag and push image if new build

@@ -105,6 +105,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region }}
+          audience: sts.amazonaws.com
 
       - name: Install Cosign
         if: steps.check-preconditions.outputs.configured == 'true'

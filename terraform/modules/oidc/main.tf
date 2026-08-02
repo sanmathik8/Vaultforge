@@ -5,9 +5,13 @@ data "tls_certificate" "github" {
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.github.certificates[0].sha1_fingerprint]
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+  thumbprint_list = distinct([
+    "6938fd4d98bab03faadb97b34396831e3780aea1",
+    "1c58a21f81e57653b4247502c91cf8e9ed3ffc34",
+    data.tls_certificate.github.certificates[0].sha1_fingerprint
+  ])
 }
 
 # Role for the CI workflow (push to ECR only)
