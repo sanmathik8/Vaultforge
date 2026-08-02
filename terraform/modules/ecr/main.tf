@@ -3,15 +3,18 @@ variable "push_role_arn" { type = string }
 
 resource "aws_ecr_repository" "app" {
   name                 = var.repo_name
-  image_tag_mutability = "IMMUTABLE"   # required so Cosign/Kyverno digest verification can't be bypassed by tag reuse
+  image_tag_mutability = "IMMUTABLE"   # Prevents tag overwrites so signed image digests remain immutable
 
   image_scanning_configuration {
     scan_on_push = true
   }
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
 }
 
-# FIX (review item #6): lifecycle policy to avoid runaway storage costs
-# against limited AWS credits — expires untagged images after 7 days.
+# Lifecycle policy: expires untagged images after 7 days to eliminate storage waste
 resource "aws_ecr_lifecycle_policy" "app" {
   repository = aws_ecr_repository.app.name
   policy = jsonencode({
@@ -29,6 +32,7 @@ resource "aws_ecr_lifecycle_policy" "app" {
   })
 }
 
+# Least-privilege resource policy restricting push access strictly to CI push role
 resource "aws_ecr_repository_policy" "push_access" {
   repository = aws_ecr_repository.app.name
   policy = jsonencode({
@@ -37,9 +41,18 @@ resource "aws_ecr_repository_policy" "push_access" {
       Sid       = "AllowCIPush"
       Effect    = "Allow"
       Principal = { AWS = var.push_role_arn }
-      Action    = ["ecr:PutImage", "ecr:UploadLayerPart", "ecr:InitiateLayerUpload", "ecr:CompleteLayerUpload", "ecr:BatchCheckLayerAvailability"]
+      Action    = [
+        "ecr:PutImage",
+        "ecr:UploadLayerPart",
+        "ecr:InitiateLayerUpload",
+        "ecr:CompleteLayerUpload",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ]
     }]
   })
 }
 
 output "repository_url" { value = aws_ecr_repository.app.repository_url }
+output "repository_arn" { value = aws_ecr_repository.app.arn }
