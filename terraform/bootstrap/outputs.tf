@@ -2,8 +2,16 @@ output "ecr_repository_url" {
   value = module.ecr.repository_url
 }
 
-output "eks_cluster_name" {
-  value = module.eks.cluster_name
+output "ecs_cluster_name" {
+  value = module.ecs.cluster_name
+}
+
+output "ecs_service_name" {
+  value = module.ecs.service_name
+}
+
+output "alb_dns_name" {
+  value = module.ecs.alb_dns_name
 }
 
 output "ci_push_role_arn" {

@@ -9,7 +9,7 @@ terraform {
   # Remote state — configure a real backend (S3 + DynamoDB lock table)
   # before first apply. Left unconfigured here so this repo has no
   # hardcoded account-specific values.
-  backend "s3" {}
+  # backend "s3" {}
 }
 
 provider "aws" {

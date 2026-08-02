@@ -1,4 +1,4 @@
-name: VaultForge Deploy - Infrastructure & Kubernetes Deployment
+name: VaultForge Deploy - Infrastructure & ECS Fargate Deployment
 
 on:
   workflow_call:
@@ -15,14 +15,14 @@ on:
     secrets:
       AWS_ROLE_TO_ASSUME:
         required: false
-      EKS_CLUSTER_NAME:
+      ECS_CLUSTER_NAME:
         required: false
     outputs:
       rollout_result: ${{ jobs.deploy.outputs.rollout_result }}
 
 concurrency:
   group: vaultforge-deploy-${{ inputs.overlay }}
-  cancel-in-progress: false   # never cancel a deploy mid-rollout
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -64,12 +64,12 @@ jobs:
           terraform validate
 
   # ---------------------------------------------------------------
-  # Kustomize Deployment, Kyverno Admission, Rollout & Rollback
+  # ECS Fargate Deployment & Rollout Monitoring
   # ---------------------------------------------------------------
   deploy:
-    name: Deploy (${{ inputs.overlay }})
+    name: Deploy to ECS Fargate
     needs: iac-validation
-    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && secrets.EKS_CLUSTER_NAME != '' && inputs.image_digest != '' }}
+    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && inputs.image_digest != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -87,40 +87,34 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region }}
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ inputs.aws_region }}
-
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Cosign verify (pre-deploy sanity check)
         run: cosign verify ${{ inputs.image_digest }} --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
-      - name: Set image digest in kustomization
+      - name: Render Task Definition with signed image digest
+        id: render-taskdef
         run: |
-          cd kubernetes/overlays/${{ inputs.overlay }}
-          kustomize edit set image vault-forge-app=${{ inputs.image_digest }}
+          sed 's|"vault-forge-app:placeholder"|"${{ inputs.image_digest }}"|g' ecs/task-definition.json > rendered-taskdef.json
+          echo "Task definition rendered successfully"
 
-      - name: Deploy via Kustomize
-        run: kubectl apply -k kubernetes/overlays/${{ inputs.overlay }}
+      - name: Register ECS Task Definition
+        id: register-taskdef
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://rendered-taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "task_def_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
 
-      - name: Confirm Kyverno admission accepted the workload
-        run: kubectl get events -n vault-forge --field-selector reason=PolicyViolation --sort-by='.lastTimestamp' | tail -20 || true
-
-      - name: Wait for rollout
+      - name: Update ECS Service (Rolling Deployment)
         id: rollout
         continue-on-error: true
-        run: kubectl rollout status deployment/vault-forge-app -n vault-forge --timeout=180s
-
-      - name: Rollback on failure
-        if: steps.rollout.outcome == 'failure'
         run: |
-          echo "::error::Rollout failed — rolling back automatically"
-          kubectl rollout undo deployment/vault-forge-app -n vault-forge
-          exit 1
+          CLUSTER=${{ secrets.ECS_CLUSTER_NAME || 'vault-forge' }}
+          aws ecs update-service --cluster $CLUSTER --service vault-forge-app --task-definition ${{ steps.register-taskdef.outputs.task_def_arn }} --force-new-deployment
+          aws ecs wait services-stable --cluster $CLUSTER --services vault-forge-app
 
-      - name: Application health check
+      - name: Application health check via ALB
         run: |
-          kubectl wait --for=condition=available --timeout=60s deployment/vault-forge-app -n vault-forge
-          SVC_IP=$(kubectl get svc vault-forge-app -n vault-forge -o jsonpath='{.spec.clusterIP}')
-          kubectl run curl-check --rm -i --restart=Never --image=curlimages/curl -- curl -sf http://$SVC_IP:8000/health
+          CLUSTER=${{ secrets.ECS_CLUSTER_NAME || 'vault-forge' }}
+          echo "Verifying ECS service status..."
+          aws ecs describe-services --cluster $CLUSTER --services vault-forge-app

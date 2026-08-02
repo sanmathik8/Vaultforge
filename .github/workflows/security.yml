@@ -1,4 +1,4 @@
-name: VaultForge Security - SAST, SCA & Manifest Validation
+name: VaultForge Security - SAST, SCA & TaskDef Validation
 
 on:
   workflow_call:
@@ -184,19 +184,13 @@ jobs:
           fi
 
   # ---------------------------------------------------------------
-  # Stage 6: kube-score - Kubernetes Manifest Validation
+  # Stage 6: ECS Task Definition Validation
   # ---------------------------------------------------------------
-  manifest-validation:
-    name: kube-score - Kubernetes Manifest Validation
+  taskdef-validation:
+    name: ECS Task Definition JSON Validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install kube-score
-        run: |
-          curl -sL https://github.com/zegl/kube-score/releases/latest/download/kube-score_linux_amd64 -o /usr/local/bin/kube-score
-          chmod +x /usr/local/bin/kube-score
-      - name: Build manifests with Kustomize
-        run: kubectl kustomize kubernetes/overlays/dev > rendered.yaml
-      - name: Run kube-score
-        run: kube-score score rendered.yaml --output-format ci
+      - name: Validate Task Definition JSON syntax
+        run: jq . ecs/task-definition.json

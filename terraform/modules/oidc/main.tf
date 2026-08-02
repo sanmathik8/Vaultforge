@@ -33,16 +33,25 @@ resource "aws_iam_role_policy" "ecr_push" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload"]
+      Effect = "Allow"
+      Action = [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ]
       Resource = "*"
     }]
   })
 }
 
-# Role for the CD workflow (deploy to EKS only — no ECR push permission)
+# Role for the CD workflow (deploy to ECS Fargate)
 resource "aws_iam_role" "eks_deploy" {
-  name = "vault-forge-cd-eks-deploy"
+  name = "vault-forge-cd-ecs-deploy"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -58,15 +67,29 @@ resource "aws_iam_role" "eks_deploy" {
 }
 
 resource "aws_iam_role_policy" "eks_deploy" {
-  name = "eks-deploy"
+  name = "ecs-deploy"
   role = aws_iam_role.eks_deploy.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["eks:DescribeCluster"]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:RegisterTaskDefinition",
+          "ecs:DescribeTaskDefinition",
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "ecs:ListTasks"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = "*"
+      }
+    ]
   })
 }
 
@@ -94,7 +117,7 @@ resource "aws_iam_role_policy" "terraform_bootstrap" {
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
-      Action   = ["s3:*", "dynamodb:*", "ecr:*", "eks:*", "iam:*"]
+      Action   = ["s3:*", "dynamodb:*", "ecr:*", "ecs:*", "iam:*", "ec2:*", "elasticloadbalancing:*", "cloudwatch:*", "logs:*", "application-autoscaling:*"]
       Resource = "*"
     }]
   })

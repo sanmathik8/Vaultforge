@@ -1,8 +1,6 @@
 # --- GitHub OIDC provider + roles ---------------------------------------
-# FIX (review item #1): replaces long-lived AWS access keys with short-lived
-# federated credentials. Two separate roles, least-privilege per job type —
-# the CI job that pushes images never gets EKS deploy permissions, and vice
-# versa.
+# Replaces long-lived AWS access keys with short-lived federated credentials.
+# Least-privilege per job type: CI role pushes to ECR, CD role deploys to ECS.
 module "github_oidc" {
   source      = "../modules/oidc"
   github_repo = var.github_repo
@@ -14,8 +12,9 @@ module "ecr" {
   push_role_arn = module.github_oidc.ecr_push_role_arn
 }
 
-module "eks" {
-  source          = "../modules/eks"
+module "ecs" {
+  source          = "../modules/ecs_fargate"
   cluster_name    = var.cluster_name
   deploy_role_arn = module.github_oidc.eks_deploy_role_arn
+  aws_region      = var.aws_region
 }
