@@ -6,7 +6,6 @@ metadata:
   labels:
     app: vault-forge-app
 spec:
-  replicas: 2
   selector:
     matchLabels:
       app: vault-forge-app
@@ -18,13 +17,27 @@ spec:
       serviceAccountName: vault-forge-app
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - vault-forge-app
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: vault-forge-app
           image: vault-forge-app:placeholder   # replaced by `kustomize edit set image` in cd-deploy.yml
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           securityContext:
@@ -36,16 +49,18 @@ spec:
             requests:
               cpu: 100m
               memory: 128Mi
+              ephemeral-storage: 100Mi
             limits:
               cpu: 500m
               memory: 512Mi
+              ephemeral-storage: 512Mi
           livenessProbe:
             httpGet:
-              path: /health
+              path: /
               port: 8000
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            failureThreshold: 3
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /health

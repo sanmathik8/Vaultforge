@@ -1,0 +1,18 @@
+# Scratch & temp files
+scratch/
+rendered.yaml
+*.tar
+*.tar.gz
+*.zip
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+tfplan
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

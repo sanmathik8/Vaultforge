@@ -14,9 +14,9 @@ on:
         default: ap-south-1
     secrets:
       AWS_ROLE_TO_ASSUME:
-        required: true
+        required: false
       EKS_CLUSTER_NAME:
-        required: true
+        required: false
 
 concurrency:
   group: vaultforge-deploy-${{ inputs.overlay }}
@@ -25,6 +25,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy (${{ inputs.overlay }})
+    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && secrets.EKS_CLUSTER_NAME != '' }}
     runs-on: ubuntu-latest
     # FIX: environment protection — requires manual approval before this job
     # runs when `overlay: prod`. Configure required reviewers on the

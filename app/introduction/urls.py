@@ -5,6 +5,7 @@ from introduction.playground.A9.api import log_function_target
 from . import apis, mitre, views
 
 urlpatterns = [
+    path('health', views.health, name='health'),
     path('accounts/', include('allauth.urls')),
     path('', views.home, name='homepage'),
     path('xss', views.xss,name="xss"),

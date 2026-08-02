@@ -28,6 +28,10 @@ from django.contrib.auth.forms import UserCreationForm
 from django.core import serializers
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
+
+def health(request):
+    return JsonResponse({'status': 'ok'})
+
 from django.template import loader
 from django.template.loader import render_to_string
 from django.views.decorators.csrf import csrf_exempt

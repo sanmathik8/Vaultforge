@@ -14,9 +14,9 @@ on:
         default: ap-south-1
     secrets:
       AWS_ROLE_TO_ASSUME:
-        required: true
+        required: false
       ECR_REPOSITORY_URL:
-        required: true
+        required: false
     outputs:
       image_digest:
         value: ${{ jobs.sign-and-push.outputs.image_digest }}
@@ -332,6 +332,7 @@ jobs:
   sign-and-push:
     name: Cosign Sign + Push to ECR
     needs: [image-scan, manifest-validation]
+    if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' && secrets.ECR_REPOSITORY_URL != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

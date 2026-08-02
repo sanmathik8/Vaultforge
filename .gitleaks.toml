@@ -1,0 +1,7 @@
+title = "VaultForge Gitleaks Config"
+
+[allowlist]
+description = "Allow mock lab tokens and dummy passwords in OWASP PyGoat training application"
+paths = [
+    '''app/introduction/.*'''
+]
