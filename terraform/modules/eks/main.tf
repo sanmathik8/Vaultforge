@@ -1,6 +1,18 @@
 variable "cluster_name" { type = string }
 variable "deploy_role_arn" { type = string }
 
+# Fetch Default AWS VPC and Subnets
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
 # Cost-conscious, production-hardened EKS cluster
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
@@ -9,6 +21,8 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.30"
 
+  vpc_id                         = data.aws_vpc.default.id
+  subnet_ids                     = data.aws_subnets.default.ids
   cluster_endpoint_public_access = true
 
   # Production Control Plane Audit Logging
