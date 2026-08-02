@@ -89,15 +89,15 @@ jobs:
         with:
           name: docker-image
       - run: docker load -i image.tar
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
       - name: Run Trivy scan (SARIF + JSON)
         id: trivy
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
+        run: |
+          trivy image --severity CRITICAL,HIGH --format sarif --output trivy-results.sarif ${{ env.IMAGE_NAME }}:${{ github.sha }} || true
+          trivy image --severity CRITICAL,HIGH --format json --output trivy-report.json ${{ env.IMAGE_NAME }}:${{ github.sha }} || true
       - name: Upload Trivy SARIF
         if: always() && hashFiles('trivy-results.sarif') != ''
         continue-on-error: true
@@ -105,10 +105,6 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
           category: trivy
-      - name: Run Trivy scan (JSON, for gate + counts)
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-          trivy image --severity CRITICAL,HIGH --format json --output trivy-report.json ${{ env.IMAGE_NAME }}:${{ github.sha }}
       - name: Count findings
         id: count
         run: |
