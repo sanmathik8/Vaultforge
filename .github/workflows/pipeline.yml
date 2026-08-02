@@ -8,12 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       overlay:
-        description: 'Target environment overlay'
+        description: 'Target environment overlay (dev, qa, staging, prod)'
         required: true
         default: 'dev'
         type: choice
         options:
           - dev
+          - qa
+          - staging
           - prod
 
 concurrency:
@@ -56,6 +58,7 @@ jobs:
       app_path: ./app
       image_name: vault-forge-app
       aws_region: ap-south-1
+      overlay: ${{ inputs.overlay || 'dev' }}
     secrets: inherit
 
   # ---------------------------------------------------------------

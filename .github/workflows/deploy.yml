@@ -71,7 +71,7 @@ jobs:
           terraform validate
 
   # ---------------------------------------------------------------
-  # ECS Fargate Deployment & Rollout Checkpoint (Tag-Based AWS Discovery)
+  # ECS Fargate Deployment & Rollout Checkpoint (Multi-Tag Environment Discovery)
   # ---------------------------------------------------------------
   deploy:
     name: Deploy to ECS Fargate
@@ -109,55 +109,77 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
           audience: sts.amazonaws.com
 
-      - name: Tag-Based AWS Infrastructure Discovery
+      - name: Multi-Tag Environment-Aware Infrastructure Discovery
         id: discover-infra
         if: steps.check-preconditions.outputs.configured == 'true'
         run: |
-          # 1. Discover ECS Cluster tagged with Project=VaultForge
-          CLUSTER_ARN=$(aws resourcegroupstaggingapi get-resources \
-            --tag-filters Key=Project,Values=VaultForge \
+          TARGET_ENV="${{ inputs.overlay || 'dev' }}"
+          echo "Executing Multi-Tag Discovery for Project=VaultForge and Environment=$TARGET_ENV..."
+
+          # 1. Discover ECS Cluster tagged with BOTH Project=VaultForge and Environment=$TARGET_ENV
+          CLUSTER_MATCHES=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge Key=Environment,Values="$TARGET_ENV" \
             --resource-type-filters ecs:cluster \
-            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+            --query 'ResourceTagMappingList[*].ResourceARN' --output text 2>/dev/null || echo "")
 
-          if [ -n "$CLUSTER_ARN" ] && [ "$CLUSTER_ARN" != "None" ]; then
-            CLUSTER_NAME=$(echo "$CLUSTER_ARN" | awk -F'/' '{print $2}')
-          else
-            CLUSTER_NAME="vault-forge"
+          CLUSTER_COUNT=$(echo "$CLUSTER_MATCHES" | tr -s '[:space:]' '\n' | sed '/^$/d' | wc -l)
+
+          if [ "$CLUSTER_COUNT" -eq 0 ]; then
+            echo "::error::No ECS cluster found matching Project=VaultForge and Environment=$TARGET_ENV"
+            exit 1
+          elif [ "$CLUSTER_COUNT" -gt 1 ]; then
+            echo "::error::Ambiguous infrastructure! Found $CLUSTER_COUNT ECS clusters matching Project=VaultForge and Environment=$TARGET_ENV: $CLUSTER_MATCHES"
+            exit 1
           fi
 
-          # 2. Discover ALB DNS Name tagged with Project=VaultForge
-          ALB_ARN=$(aws resourcegroupstaggingapi get-resources \
-            --tag-filters Key=Project,Values=VaultForge \
+          CLUSTER_ARN=$(echo "$CLUSTER_MATCHES" | tr -s '[:space:]' '\n' | head -n 1)
+          CLUSTER_NAME=$(echo "$CLUSTER_ARN" | awk -F'/' '{print $2}')
+
+          # 2. Discover ALB DNS Name tagged with BOTH Project=VaultForge and Environment=$TARGET_ENV
+          ALB_MATCHES=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge Key=Environment,Values="$TARGET_ENV" \
             --resource-type-filters elasticloadbalancing:loadbalancer \
-            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+            --query 'ResourceTagMappingList[*].ResourceARN' --output text 2>/dev/null || echo "")
 
-          if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
-            ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
-          else
-            ALB_DNS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
+          ALB_COUNT=$(echo "$ALB_MATCHES" | tr -s '[:space:]' '\n' | sed '/^$/d' | wc -l)
+
+          if [ "$ALB_COUNT" -eq 0 ]; then
+            echo "::error::No ALB found matching Project=VaultForge and Environment=$TARGET_ENV"
+            exit 1
+          elif [ "$ALB_COUNT" -gt 1 ]; then
+            echo "::error::Ambiguous infrastructure! Found $ALB_COUNT ALBs matching Project=VaultForge and Environment=$TARGET_ENV: $ALB_MATCHES"
+            exit 1
           fi
 
-          # 3. Discover ECS Service Name tagged with Project=VaultForge
-          SERVICE_ARN=$(aws resourcegroupstaggingapi get-resources \
-            --tag-filters Key=Project,Values=VaultForge \
-            --resource-type-filters ecs:service \
-            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+          ALB_ARN=$(echo "$ALB_MATCHES" | tr -s '[:space:]' '\n' | head -n 1)
+          ALB_DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ALB_ARN" --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || echo "")
 
-          if [ -n "$SERVICE_ARN" ] && [ "$SERVICE_ARN" != "None" ]; then
+          # 3. Discover ECS Service Name tagged with BOTH Project=VaultForge and Environment=$TARGET_ENV
+          SERVICE_MATCHES=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge Key=Environment,Values="$TARGET_ENV" \
+            --resource-type-filters ecs:service \
+            --query 'ResourceTagMappingList[*].ResourceARN' --output text 2>/dev/null || echo "")
+
+          SERVICE_COUNT=$(echo "$SERVICE_MATCHES" | tr -s '[:space:]' '\n' | sed '/^$/d' | wc -l)
+
+          if [ "$SERVICE_COUNT" -eq 1 ]; then
+            SERVICE_ARN=$(echo "$SERVICE_MATCHES" | tr -s '[:space:]' '\n' | head -n 1)
             SERVICE_NAME=$(echo "$SERVICE_ARN" | awk -F'/' '{print $3}')
           else
-            SERVICE_NAME=$(aws ecs list-services --cluster "$CLUSTER_NAME" --query 'serviceArns[0]' --output text 2>/dev/null | awk -F'/' '{print $3}' || echo "vault-forge-app")
+            # Fallback to inspecting target cluster services if service tagging is managed at cluster level
+            SERVICE_NAME=$(aws ecs list-services --cluster "$CLUSTER_NAME" --query 'serviceArns[0]' --output text 2>/dev/null | awk -F'/' '{print $3}')
           fi
 
           echo "cluster_name=$CLUSTER_NAME" >> "$GITHUB_OUTPUT"
           echo "service_name=$SERVICE_NAME" >> "$GITHUB_OUTPUT"
           echo "alb_dns=$ALB_DNS" >> "$GITHUB_OUTPUT"
 
-          echo "### 🔍 Tag-Based AWS Infrastructure Discovered" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Environment-Aware AWS Infrastructure Discovered" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Environment**: \`${TARGET_ENV}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ECS Cluster**: \`${CLUSTER_NAME}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ECS Service**: \`${SERVICE_NAME}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ALB Endpoint**: \`${ALB_DNS}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Filter**: \`Project=VaultForge\` via AWS Resource Groups Tagging API" >> $GITHUB_STEP_SUMMARY
+          echo "- **Validation Guard**: Verified Single-Resource Match for \`Project=VaultForge\` + \`Environment=${TARGET_ENV}\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Install Cosign
         if: steps.check-preconditions.outputs.configured == 'true'

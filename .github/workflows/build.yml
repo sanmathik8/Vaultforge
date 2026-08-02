@@ -12,6 +12,9 @@ on:
       aws_region:
         type: string
         default: ap-south-1
+      overlay:
+        type: string
+        default: dev
     secrets:
       AWS_ROLE_TO_ASSUME:
         required: false
@@ -22,7 +25,7 @@ on:
         value: ${{ jobs.check-ecr-checkpoint.outputs.ecr_repository_url }}
 
 concurrency:
-  group: vaultforge-build-${{ github.ref }}
+  group: vaultforge-build-${{ inputs.overlay }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -36,10 +39,10 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Checkpoint 1 & Metadata Discovery: Tag-Based ECR Repository URI
+  # Checkpoint 1 & Metadata Discovery: Multi-Tag ECR Repository URI
   # ---------------------------------------------------------------
   check-ecr-checkpoint:
-    name: Tag-Based AWS Discovery & ECR Checkpoint
+    name: Environment-Aware AWS Discovery & ECR Checkpoint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -49,6 +52,7 @@ jobs:
       image_exists: ${{ steps.ecr-check.outputs.image_exists }}
       existing_digest: ${{ steps.ecr-check.outputs.existing_digest }}
       ecr_repository_url: ${{ steps.discover.outputs.ecr_url }}
+      repo_name: ${{ steps.discover.outputs.repo_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,25 +75,35 @@ jobs:
           aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
           audience: sts.amazonaws.com
 
-      - name: Tag-Based AWS Infrastructure Discovery
+      - name: Multi-Tag Environment-Aware ECR Discovery
         id: discover
         if: steps.check-secrets.outputs.configured == 'true'
         run: |
-          # Discover ECR repository tagged with Project=VaultForge
-          ECR_ARN=$(aws resourcegroupstaggingapi get-resources \
-            --tag-filters Key=Project,Values=VaultForge \
-            --resource-type-filters ecr:repository \
-            --query 'ResourceTagMappingList[0].ResourceARN' --output text 2>/dev/null || echo "")
+          TARGET_ENV="${{ inputs.overlay || 'dev' }}"
+          echo "Querying AWS Resource Groups Tagging API for Project=VaultForge and Environment=$TARGET_ENV..."
 
-          if [ -n "$ECR_ARN" ] && [ "$ECR_ARN" != "None" ]; then
+          # Discover ECR repository matching BOTH Project=VaultForge and Environment=$TARGET_ENV
+          MATCHES=$(aws resourcegroupstaggingapi get-resources \
+            --tag-filters Key=Project,Values=VaultForge Key=Environment,Values="$TARGET_ENV" \
+            --resource-type-filters ecr:repository \
+            --query 'ResourceTagMappingList[*].ResourceARN' --output text 2>/dev/null || echo "")
+
+          COUNT=$(echo "$MATCHES" | tr -s '[:space:]' '\n' | sed '/^$/d' | wc -l)
+
+          if [ "$COUNT" -eq 0 ]; then
+            # Fallback to default naming if repository is shared across environments
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            REGION="${{ inputs.aws_region || 'ap-south-1' }}"
+            REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
+          elif [ "$COUNT" -gt 1 ]; then
+            echo "::error::Ambiguous infrastructure! Found $COUNT ECR repositories matching Project=VaultForge and Environment=$TARGET_ENV: $MATCHES"
+            exit 1
+          else
+            ECR_ARN=$(echo "$MATCHES" | tr -s '[:space:]' '\n' | head -n 1)
             REPO_NAME=$(echo "$ECR_ARN" | sed 's|.*repository/||')
             ACCOUNT_ID=$(echo "$ECR_ARN" | cut -d':' -f5)
             REGION=$(echo "$ECR_ARN" | cut -d':' -f4)
-            ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
-          else
-            REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            REGION="${{ inputs.aws_region || 'ap-south-1' }}"
             ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
           fi
 
@@ -97,9 +111,10 @@ jobs:
           echo "ecr_url=$ECR_URL" >> "$GITHUB_ENV"
           echo "repo_name=$REPO_NAME" >> "$GITHUB_OUTPUT"
 
-          echo "### 🔍 Tag-Based AWS Metadata Discovered" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Environment-Aware ECR Discovered" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Environment**: \`${TARGET_ENV}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **ECR Repository URI**: \`${ECR_URL}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Discovery Method**: AWS Resource Groups Tagging API (\`Project=VaultForge\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Filter**: \`Project=VaultForge\` + \`Environment=${TARGET_ENV}\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Login to Amazon ECR
         if: steps.check-secrets.outputs.configured == 'true'

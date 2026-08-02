@@ -1,10 +1,19 @@
 variable "repo_name" { type = string }
 variable "push_role_arn" { type = string }
+variable "environment" {
+  type    = string
+  default = "dev"
+}
 
 resource "aws_ecr_repository" "app" {
   name                 = var.repo_name
   image_tag_mutability = "IMMUTABLE" # Prevents tag overwrites so signed image digests remain immutable
-  tags                 = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags = {
+    Project     = "VaultForge"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+    Application = "VaultForge"
+  }
 
   image_scanning_configuration {
     scan_on_push = true

@@ -4,6 +4,19 @@ variable "aws_region" {
   type    = string
   default = "ap-south-1"
 }
+variable "environment" {
+  type    = string
+  default = "dev"
+}
+
+locals {
+  common_tags = {
+    Project     = "VaultForge"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+    Application = "VaultForge"
+  }
+}
 
 # Fetch Default AWS VPC and Subnets
 data "aws_vpc" "default" {
@@ -20,7 +33,7 @@ data "aws_subnets" "default" {
 # --- 1. ECS Cluster & CloudWatch Logs ----------------------------------------
 resource "aws_ecs_cluster" "app" {
   name = var.cluster_name
-  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags = local.common_tags
 
   setting {
     name  = "containerInsights"
@@ -31,13 +44,13 @@ resource "aws_ecs_cluster" "app" {
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/ecs/${var.cluster_name}-app"
   retention_in_days = 30
-  tags              = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags              = local.common_tags
 }
 
 # --- 2. IAM Roles -------------------------------------------------------------
 resource "aws_iam_role" "task_execution" {
   name = "${var.cluster_name}-ecs-execution-role"
-  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags = local.common_tags
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -55,7 +68,7 @@ resource "aws_iam_role_policy_attachment" "task_execution" {
 
 resource "aws_iam_role" "task_role" {
   name = "${var.cluster_name}-ecs-task-role"
-  tags = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags = local.common_tags
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -71,7 +84,7 @@ resource "aws_security_group" "alb" {
   name        = "${var.cluster_name}-alb-sg"
   description = "Allow HTTP inbound to ALB"
   vpc_id      = data.aws_vpc.default.id
-  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags        = local.common_tags
 
   ingress {
     description = "HTTP"
@@ -93,7 +106,7 @@ resource "aws_security_group" "ecs_tasks" {
   name        = "${var.cluster_name}-ecs-tasks-sg"
   description = "Allow inbound from ALB only"
   vpc_id      = data.aws_vpc.default.id
-  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags        = local.common_tags
 
   ingress {
     description     = "HTTP from ALB"
@@ -118,7 +131,7 @@ resource "aws_lb" "main" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
-  tags               = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags               = local.common_tags
 }
 
 resource "aws_lb_target_group" "app" {
@@ -127,7 +140,7 @@ resource "aws_lb_target_group" "app" {
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
-  tags        = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags        = local.common_tags
 
   health_check {
     path                = "/health"
@@ -161,7 +174,7 @@ resource "aws_ecs_task_definition" "app" {
   memory                   = "512"
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = aws_iam_role.task_role.arn
-  tags                     = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags                     = local.common_tags
 
   container_definitions = jsonencode([{
     name      = "vault-forge-app"
@@ -206,7 +219,7 @@ resource "aws_ecs_service" "app" {
   launch_type                        = "FARGATE"
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-  tags                               = { Project = "VaultForge", ManagedBy = "Terraform" }
+  tags                               = local.common_tags
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids

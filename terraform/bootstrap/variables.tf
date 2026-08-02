@@ -8,6 +8,12 @@ variable "cluster_name" {
   default = "vault-forge"
 }
 
+variable "environment" {
+  description = "Target deployment environment (dev, qa, staging, prod)"
+  type        = string
+  default     = "dev"
+}
+
 variable "github_repo" {
   description = "org/repo allowed to assume the CI/CD OIDC roles"
   type        = string
