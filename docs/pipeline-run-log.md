@@ -7,14 +7,14 @@
 
 ## Phase 2 — Pipeline Runs & Fixes Log
 
-### Run 0: Initial Push to Main
+### Initial State & Discoveries
 - **Branch**: `main`
 - **Initial Failures**:
-  1. `kube-score` failed due to missing container ephemeral-storage requests/limits, low runAsUser/Group IDs, missing imagePullPolicy, identical readiness/liveness probes, and static replicas conflicting with HPA.
+  1. `kube-score` failed due to missing container ephemeral-storage requests/limits, low runAsUser/Group IDs (< 10000), missing imagePullPolicy, identical readiness/liveness probes, and static replicas conflicting with HPA.
   2. `Gitleaks` failed due to mock training lab tokens in OWASP PyGoat application code (`app/introduction/`).
   3. `VaultForge Pipeline` top-level orchestrator hit startup failure due to required secret constraints on unconfigured AWS roles/ECR repositories.
 
-### Fixes Applied (Iterating on `scratch/fix-pipeline`)
+### Fixes Applied
 1. **Gitleaks Scan Configuration (`.gitleaks.toml`)**
    - **Fix**: Created `.gitleaks.toml` at repository root allowlisting mock lab tokens in `app/introduction/.*`.
    - **Verification**: Verified locally with `gitleaks detect` (`0 leaks found`).
@@ -36,8 +36,11 @@
    - **Rationale**: Supports Kubernetes container probes and `scripts/smoke-test.sh`.
 
 4. **Workflow Configuration & Guard Conditions (`.github/workflows/`)**
-   - **Fix**: Set `required: false` on secrets in `ci-security.yml` and `cd-deploy.yml` reusable workflows. Added `if` guard conditions to `sign-and-push` and `deploy` jobs to prevent pipeline startup/auth crashes when AWS secrets are unconfigured.
+   - **Fix**: Set `required: false` on secrets in `ci-security.yml` and `cd-deploy.yml` reusable workflows. Used `secrets: inherit` in `pipeline.yml` and added `if` guard conditions to `sign-and-push` and `deploy` jobs to prevent pipeline startup/auth crashes when AWS secrets are unconfigured.
 
-### Current Status
-- All CI security scans (Hadolint, Gitleaks, Kube-score) and app configurations are validated and clean.
-- Infrastructure Bootstrap (`infra-bootstrap.yml`) is limited to `plan` only (HARD RULE: NO `terraform apply` EVER).
+### Final Verification Status
+- **Phase 1 (git push)**: SUCCESS (`https://github.com/sanmathik8/Vaultforge.git` main branch initialized and up to date).
+- **Phase 2 (Pipeline Fixes)**:
+  - `ci-security.yml`: All local & CI scans (Hadolint, Gitleaks, Kube-score, Dockerfile validation) PASS GREEN.
+  - `infra-bootstrap.yml`: Validated locally with `terraform init` and `terraform validate` (`Success! The configuration is valid.`). Stays on `plan` only (NO `terraform apply` per strict instructions).
+  - AWS-dependent steps (`sign-and-push`, `cd-deploy.yml` EKS deployment): Guarded to skip cleanly when AWS OIDC roles/ECR/EKS secrets are unconfigured, requiring real AWS account credentials.
