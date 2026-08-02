@@ -10,18 +10,14 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci-security.yml
-    secrets:
-      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
-      ECR_REPOSITORY_URL: ${{ secrets.ECR_REPOSITORY_URL }}
+    secrets: inherit
 
   cd:
     name: CD
     needs: ci
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && needs.ci.outputs.image_digest != ''
     uses: ./.github/workflows/cd-deploy.yml
     with:
       image_digest: ${{ needs.ci.outputs.image_digest }}
       overlay: dev
-    secrets:
-      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_EKS_DEPLOY_ROLE_ARN }}
-      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+    secrets: inherit
