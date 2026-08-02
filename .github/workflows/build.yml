@@ -56,22 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Diagnostic - Inspect Non-Sensitive OIDC Token Claims
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              const token = await core.getIDToken("sts.amazonaws.com");
-              const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-              console.log("iss:", payload.iss);
-              console.log("aud:", payload.aud);
-              console.log("sub:", payload.sub);
-              console.log("repository:", payload.repository);
-              console.log("ref:", payload.ref);
-            } catch (err) {
-              console.log("Failed to issue id-token:", err.message);
-            }
-
       - name: Check AWS role secret configured
         id: check-secrets
         env:
@@ -312,11 +296,16 @@ jobs:
         if: steps.check-secrets.outputs.configured == 'true'
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Download build artifact
+        if: steps.check-secrets.outputs.configured == 'true' && needs.check-ecr-checkpoint.outputs.image_exists != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
       - name: Tag and push image if new build
         if: steps.check-secrets.outputs.configured == 'true' && needs.check-ecr-checkpoint.outputs.image_exists != 'true'
         id: push
         run: |
-          uses: actions/download-artifact@v4
           docker load -i image.tar
           ECR_URL="${{ steps.discover-ecr.outputs.ecr_url }}"
           docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${ECR_URL}:${{ github.sha }}
