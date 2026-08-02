@@ -21,7 +21,13 @@ resource "aws_iam_role" "ecr_push" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:*",
+            "repo:sanmathik8/Vaultforge:*",
+            "repo:sanmathik8/VaultForge:*"
+          ]
+        }
       }
     }]
   })
@@ -60,7 +66,13 @@ resource "aws_iam_role" "eks_deploy" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:*",
+            "repo:sanmathik8/Vaultforge:*",
+            "repo:sanmathik8/VaultForge:*"
+          ]
+        }
       }
     }]
   })
@@ -104,7 +116,13 @@ resource "aws_iam_role" "terraform_bootstrap" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:*",
+            "repo:sanmathik8/Vaultforge:*",
+            "repo:sanmathik8/VaultForge:*"
+          ]
+        }
       }
     }]
   })
