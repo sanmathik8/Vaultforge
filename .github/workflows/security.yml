@@ -25,6 +25,7 @@ jobs:
   validate-dockerfile:
     name: Validate Dockerfile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Check Dockerfile exists
@@ -43,6 +44,7 @@ jobs:
     name: Gitleaks - Secrets Scan
     needs: validate-dockerfile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -72,6 +74,7 @@ jobs:
     name: Hadolint - Dockerfile Best Practices
     needs: validate-dockerfile
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -99,6 +102,7 @@ jobs:
     name: OSV-Scanner - Dependency Scan
     needs: secrets-scan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -128,6 +132,7 @@ jobs:
     name: Semgrep - SAST
     needs: secrets-scan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -184,6 +189,7 @@ jobs:
   manifest-validation:
     name: kube-score - Kubernetes Manifest Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install kube-score

@@ -3,7 +3,7 @@ variable "push_role_arn" { type = string }
 
 resource "aws_ecr_repository" "app" {
   name                 = var.repo_name
-  image_tag_mutability = "IMMUTABLE"   # Prevents tag overwrites so signed image digests remain immutable
+  image_tag_mutability = "IMMUTABLE" # Prevents tag overwrites so signed image digests remain immutable
 
   image_scanning_configuration {
     scan_on_push = true
@@ -41,7 +41,7 @@ resource "aws_ecr_repository_policy" "push_access" {
       Sid       = "AllowCIPush"
       Effect    = "Allow"
       Principal = { AWS = var.push_role_arn }
-      Action    = [
+      Action = [
         "ecr:PutImage",
         "ecr:UploadLayerPart",
         "ecr:InitiateLayerUpload",

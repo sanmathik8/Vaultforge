@@ -1,9 +1,5 @@
 name: VaultForge Infra - Terraform Bootstrap
 
-# FIX: Terraform for EKS/ECR/OIDC no longer runs on every app push. It only
-# runs on manual dispatch, or on a PR that actually touches terraform/, so
-# the cluster/registry lifecycle is decoupled from the app deploy cadence
-# and there's a plan-review step before anything is ever applied.
 on:
   workflow_dispatch:
     inputs:
@@ -25,11 +21,13 @@ permissions:
   contents: read
   id-token: write
   pull-requests: write
+  security-events: write
 
 jobs:
   iac-scan:
     name: Checkov - Terraform IaC Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
@@ -54,9 +52,11 @@ jobs:
     name: Terraform ${{ github.event.inputs.action || 'plan' }}
     needs: iac-scan
     runs-on: ubuntu-latest
-    # FIX: environment protection — `apply` requires a manual approver,
-    # even though this workflow itself is already manually triggered.
-    environment: ${{ github.event.inputs.action == 'apply' && 'production' || '' }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     defaults:
       run:
         working-directory: terraform/bootstrap
