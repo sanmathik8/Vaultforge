@@ -21,7 +21,6 @@ concurrency:
   cancel-in-progress: true
 
 # Top-Level Permission Ceiling: Superset of all permissions required by reusable sub-workflows.
-# Enforces strict least privilege — no 'write-all' or elevated admin scopes.
 permissions:
   contents: read
   id-token: write
@@ -93,4 +92,5 @@ jobs:
       image_digest: ${{ needs.build.outputs.image_digest || '' }}
       overlay: ${{ inputs.overlay || 'dev' }}
       rollout_result: ${{ needs.deploy.outputs.rollout_result || 'skipped' }}
+      already_deployed: ${{ needs.deploy.outputs.already_deployed || 'false' }}
     secrets: inherit

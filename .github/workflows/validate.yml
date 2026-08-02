@@ -12,6 +12,9 @@ on:
       rollout_result:
         type: string
         default: "skipped"
+      already_deployed:
+        type: string
+        default: "false"
 
 concurrency:
   group: vaultforge-validate-${{ inputs.overlay }}
@@ -37,26 +40,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check validation checkpoint
+        id: check-checkpoint
+        run: |
+          if [ "${{ inputs.already_deployed }}" = "true" ]; then
+            echo "run_validation=false" >> "$GITHUB_OUTPUT"
+            echo "### ⏩ Validation Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
+            echo "Target image digest is already active on ECS. Skipping redundant DAST & smoke tests." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "run_validation=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Smoke tests
-        if: ${{ inputs.rollout_result == 'success' }}
+        if: steps.check-checkpoint.outputs.run_validation == 'true' && inputs.rollout_result == 'success'
         run: ./scripts/smoke-test.sh ${{ inputs.overlay }}
         continue-on-error: true
 
       - name: Run ZAP baseline scan (DAST)
         id: zap
-        if: ${{ inputs.rollout_result == 'success' }}
+        if: steps.check-checkpoint.outputs.run_validation == 'true' && inputs.rollout_result == 'success'
         continue-on-error: true
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: 'http://localhost:8000'
 
       - name: Upload ZAP SARIF
-        if: always()
+        if: always() && hashFiles('report_html.html') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: report_html.html
           category: zap-dast
-        continue-on-error: true
 
       - name: Create issue on DAST findings
         if: steps.zap.outcome == 'failure'
@@ -82,7 +96,7 @@ jobs:
         run: |
           echo "# 🛡️ VaultForge Enterprise Pipeline Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Stage | Result | Details |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---| " >> $GITHUB_STEP_SUMMARY
           echo "| Rollout | \`${{ inputs.rollout_result }}\` | Environment: \`${{ inputs.overlay }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| ZAP DAST | \`${{ steps.zap.outcome || 'skipped' }}\` | Target: \`http://vault-forge-app\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Image Digest | \`${{ inputs.image_digest || 'n/a' }}\` | Signed via Cosign |" >> $GITHUB_STEP_SUMMARY

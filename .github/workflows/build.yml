@@ -19,7 +19,7 @@ on:
         required: false
     outputs:
       image_digest:
-        value: ${{ jobs.sign-and-push.outputs.image_digest }}
+        value: ${{ jobs.sign-and-push.outputs.image_digest || jobs.check-ecr-checkpoint.outputs.existing_digest }}
 
 concurrency:
   group: vaultforge-build-${{ github.ref }}
@@ -36,10 +36,70 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Build Image & Generate SBOM (with GHA Layer Caching)
+  # Checkpoint 1: Check if Image already exists in ECR
+  # ---------------------------------------------------------------
+  check-ecr-checkpoint:
+    name: Checkpoint - ECR Image Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_exists: ${{ steps.ecr-check.outputs.image_exists }}
+      existing_digest: ${{ steps.ecr-check.outputs.existing_digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check AWS credentials configured
+        id: check-secrets
+        env:
+          AWS_ROLE: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          ECR_URL: ${{ secrets.ECR_REPOSITORY_URL }}
+        run: |
+          if [ -z "$AWS_ROLE" ] || [ -z "$ECR_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials via OIDC
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region || 'ap-south-1' }}
+
+      - name: Login to Amazon ECR
+        if: steps.check-secrets.outputs.configured == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Inspect ECR for existing commit image tag
+        id: ecr-check
+        if: steps.check-secrets.outputs.configured == 'true'
+        run: |
+          REPO_NAME="${{ inputs.image_name || 'vault-forge-app' }}"
+          TAG="${{ github.sha }}"
+          EXISTING_DIGEST=$(aws ecr describe-images --repository-name "$REPO_NAME" --image-ids imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_DIGEST" ] && [ "$EXISTING_DIGEST" != "None" ]; then
+            FULL_DIGEST="${{ secrets.ECR_REPOSITORY_URL }}@${EXISTING_DIGEST}"
+            echo "image_exists=true" >> "$GITHUB_OUTPUT"
+            echo "existing_digest=$FULL_DIGEST" >> "$GITHUB_OUTPUT"
+            echo "### ⏩ ECR Image Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
+            echo "Image \`${FULL_DIGEST}\` already exists in ECR. Skipping Docker build & SBOM." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "image_exists=false" >> "$GITHUB_OUTPUT"
+            echo "existing_digest=" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------
+  # Build Image & Generate SBOM (Skipped if ECR Checkpoint Hit)
   # ---------------------------------------------------------------
   build-and-sbom:
     name: Build Image + SBOM
+    needs: check-ecr-checkpoint
+    if: needs.check-ecr-checkpoint.outputs.image_exists != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -85,11 +145,12 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------
-  # Trivy - Container Vulnerability Scan
+  # Trivy - Container Vulnerability Scan (Skipped if Checkpoint Hit)
   # ---------------------------------------------------------------
   image-scan:
     name: Trivy - Container Vulnerability Scan
-    needs: build-and-sbom
+    needs: [check-ecr-checkpoint, build-and-sbom]
+    if: always() && needs.check-ecr-checkpoint.outputs.image_exists != 'true' && (needs.build-and-sbom.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -144,24 +205,20 @@ jobs:
           fi
 
   # ---------------------------------------------------------------
-  # Cosign Sign + Push to Amazon ECR
+  # Cosign Sign + Push to Amazon ECR (Idempotent Signature Check)
   # ---------------------------------------------------------------
   sign-and-push:
     name: Cosign Sign + Push to ECR
-    needs: image-scan
+    needs: [check-ecr-checkpoint, image-scan]
+    if: always() && (needs.check-ecr-checkpoint.outputs.image_exists == 'true' || needs.image-scan.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       id-token: write   # required for OIDC
     outputs:
-      image_digest: ${{ steps.push.outputs.digest }}
+      image_digest: ${{ steps.push.outputs.digest || needs.check-ecr-checkpoint.outputs.existing_digest }}
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-      - run: docker load -i image.tar
-
       - name: Check AWS credentials secret configured
         id: check-secrets
         env:
@@ -169,7 +226,6 @@ jobs:
           ECR_URL: ${{ secrets.ECR_REPOSITORY_URL }}
         run: |
           if [ -z "$AWS_ROLE" ] || [ -z "$ECR_URL" ]; then
-            echo "::warning::AWS_ROLE_TO_ASSUME or ECR_REPOSITORY_URL secret not set. Skipping ECR push & Cosign sign."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -187,10 +243,12 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Tag and push image (by digest)
-        if: steps.check-secrets.outputs.configured == 'true'
+      - name: Tag and push image if new build
+        if: steps.check-secrets.outputs.configured == 'true' && needs.check-ecr-checkpoint.outputs.image_exists != 'true'
         id: push
         run: |
+          uses: actions/download-artifact@v4
+          docker load -i image.tar
           docker tag ${{ env.IMAGE_NAME }}:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
           docker push ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }}
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ secrets.ECR_REPOSITORY_URL }}:${{ github.sha }})
@@ -200,8 +258,23 @@ jobs:
         if: steps.check-secrets.outputs.configured == 'true'
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign image (keyless)
+      - name: Verify Cosign Signature (Checkpoint Check)
+        id: cosign-check
         if: steps.check-secrets.outputs.configured == 'true'
+        run: |
+          TARGET_DIGEST="${{ steps.push.outputs.digest || needs.check-ecr-checkpoint.outputs.existing_digest }}"
+          if cosign verify "$TARGET_DIGEST" --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" >/dev/null 2>&1; then
+            echo "already_signed=true" >> "$GITHUB_OUTPUT"
+            echo "### ⏩ Cosign Signature Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
+            echo "Image \`${TARGET_DIGEST}\` is already signed via Cosign. Skipping duplicate signing." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "already_signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign image (keyless) if unsigned
+        if: steps.check-secrets.outputs.configured == 'true' && steps.cosign-check.outputs.already_signed != 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
-        run: cosign sign --yes ${{ steps.push.outputs.digest }}
+        run: |
+          TARGET_DIGEST="${{ steps.push.outputs.digest || needs.check-ecr-checkpoint.outputs.existing_digest }}"
+          cosign sign --yes "$TARGET_DIGEST"

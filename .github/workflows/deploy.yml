@@ -21,6 +21,9 @@ on:
       rollout_result:
         description: "Outcome of the rollout step"
         value: ${{ jobs.deploy.outputs.rollout_result }}
+      already_deployed:
+        description: "True if target digest was already running in ECS"
+        value: ${{ jobs.deploy.outputs.already_deployed }}
 
 concurrency:
   group: vaultforge-deploy-${{ inputs.overlay }}
@@ -67,7 +70,7 @@ jobs:
           terraform validate
 
   # ---------------------------------------------------------------
-  # ECS Fargate Deployment & Rollout Monitoring
+  # ECS Fargate Deployment & Rollout Checkpoint
   # ---------------------------------------------------------------
   deploy:
     name: Deploy to ECS Fargate
@@ -79,7 +82,8 @@ jobs:
       id-token: write   # required for OIDC
       security-events: write
     outputs:
-      rollout_result: ${{ steps.rollout.outcome }}
+      rollout_result: ${{ steps.rollout.outcome || 'skipped' }}
+      already_deployed: ${{ steps.ecs-checkpoint.outputs.already_deployed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,7 +94,6 @@ jobs:
           DIGEST: ${{ inputs.image_digest }}
         run: |
           if [ -z "$AWS_ROLE" ] || [ -z "$DIGEST" ]; then
-            echo "::warning::AWS_ROLE_TO_ASSUME secret or image_digest input missing. Skipping ECS deployment."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -111,22 +114,43 @@ jobs:
         if: steps.check-preconditions.outputs.configured == 'true'
         run: cosign verify ${{ inputs.image_digest }} --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
-      - name: Render Task Definition with signed image digest
+      - name: Check ECS Service Active Image Checkpoint
+        id: ecs-checkpoint
         if: steps.check-preconditions.outputs.configured == 'true'
+        run: |
+          CLUSTER="${{ secrets.ECS_CLUSTER_NAME || 'vault-forge' }}"
+          ACTIVE_TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER" --services vault-forge-app --query 'services[0].taskDefinition' --output text 2>/dev/null || echo "")
+          
+          if [ -n "$ACTIVE_TASK_DEF" ] && [ "$ACTIVE_TASK_DEF" != "None" ]; then
+            ACTIVE_IMAGE=$(aws ecs describe-task-definition --task-definition "$ACTIVE_TASK_DEF" --query 'taskDefinition.containerDefinitions[0].image' --output text 2>/dev/null || echo "")
+          else
+            ACTIVE_IMAGE=""
+          fi
+
+          if [ "$ACTIVE_IMAGE" = "${{ inputs.image_digest }}" ]; then
+            echo "already_deployed=true" >> "$GITHUB_OUTPUT"
+            echo "### ⏩ ECS Deployment Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
+            echo "ECS Service \`vault-forge-app\` is already running target image digest \`${{ inputs.image_digest }}\`. Skipping duplicate rollout." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "already_deployed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render Task Definition with signed image digest
+        if: steps.check-preconditions.outputs.configured == 'true' && steps.ecs-checkpoint.outputs.already_deployed != 'true'
         id: render-taskdef
         run: |
           sed 's|"vault-forge-app:placeholder"|"${{ inputs.image_digest }}"|g' ecs/task-definition.json > rendered-taskdef.json
           echo "Task definition rendered successfully"
 
       - name: Register ECS Task Definition
-        if: steps.check-preconditions.outputs.configured == 'true'
+        if: steps.check-preconditions.outputs.configured == 'true' && steps.ecs-checkpoint.outputs.already_deployed != 'true'
         id: register-taskdef
         run: |
           TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://rendered-taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "task_def_arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
 
       - name: Update ECS Service (Rolling Deployment)
-        if: steps.check-preconditions.outputs.configured == 'true'
+        if: steps.check-preconditions.outputs.configured == 'true' && steps.ecs-checkpoint.outputs.already_deployed != 'true'
         id: rollout
         continue-on-error: true
         run: |
