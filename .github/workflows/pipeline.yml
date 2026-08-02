@@ -20,12 +20,21 @@ concurrency:
   group: vaultforge-pipeline-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+  issues: write
+
 jobs:
   # ---------------------------------------------------------------
   # 1. Security Scanning (SAST, SCA, Linters, TaskDef Validation)
   # ---------------------------------------------------------------
   security:
     name: Security & Quality
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/security.yml
     with:
       app_path: ./app
@@ -37,6 +46,10 @@ jobs:
   build:
     name: Build & Container Security
     needs: security
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
     uses: ./.github/workflows/build.yml
     with:
       app_path: ./app
@@ -51,6 +64,10 @@ jobs:
     name: Infrastructure & CD Deploy
     needs: build
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
     uses: ./.github/workflows/deploy.yml
     with:
       image_digest: ${{ needs.build.outputs.image_digest || '' }}
@@ -65,6 +82,10 @@ jobs:
     name: Post-Deploy Validation & DAST
     needs: [deploy, build]
     if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      issues: write
+      security-events: write
     uses: ./.github/workflows/validate.yml
     with:
       image_digest: ${{ needs.build.outputs.image_digest || '' }}
