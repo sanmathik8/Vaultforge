@@ -15,8 +15,13 @@ spec:
               kubernetes.io/metadata.name: ingress-nginx
       ports:
         - port: 8000
-    # Allow the CI runner / ZAP baseline job to reach the service directly
-    # during DAST — scope this to your runner's namespace/CIDR in production.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8000
+    # Allow in-cluster pods / ZAP runner to reach service
     - from:
         - podSelector: {}
       ports:

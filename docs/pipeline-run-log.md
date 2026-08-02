@@ -16,6 +16,12 @@
 - **EKS Control Plane Hardening**: Enabled full EKS control plane audit logging (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`) and configured node group `ebs_optimized = true`.
 - **IAM Least Privilege**: Scoped `sanmathik8/Vaultforge` OIDC repository parameters across all federated IAM role policies (`ecr_push`, `eks_deploy`, `terraform_bootstrap`).
 
+## Phase 4 — Monitoring, Observability & Runtime Security Audit
+- **Audit Result**: Full production readiness audit completed. Verified Prometheus target auto-discovery (`ServiceMonitor`), Alertmanager webhook routing, Grafana ConfigMap dashboard provisioning (`monitoring/dashboards-configmap.yaml`), Metrics Server HPA compatibility, and Falco eBPF DaemonSet runtime rules.
+- **Integration Hardening**:
+  - Updated `kubernetes/base/networkpolicy.yaml` to explicitly permit Ingress traffic from the `monitoring` namespace to `vault-forge-app` port 8000 for Prometheus metrics collection.
+  - Created `monitoring/dashboards-configmap.yaml` containing auto-mounting Grafana dashboard JSONs (`vault-forge-dashboards`).
+
 ## Modular Enterprise Pipeline Refactoring
 
 Refactored the GitHub Actions workflow architecture from monolithic/duplicated files into an enterprise-grade, modular pipeline:
