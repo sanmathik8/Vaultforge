@@ -36,7 +36,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Build Image & Generate SBOM
+  # Build Image & Generate SBOM (with GHA Layer Caching)
   # ---------------------------------------------------------------
   build-and-sbom:
     name: Build Image + SBOM
@@ -48,21 +48,36 @@ jobs:
       sbom_result: ${{ steps.sbom.outcome }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build application image
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build application image with GHA layer caching
         id: docker-build
-        run: docker buildx build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} --load ${{ env.APP_PATH }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.APP_PATH }}
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Save image for downstream jobs
         run: docker save ${{ env.IMAGE_NAME }}:${{ github.sha }} -o image.tar
+
       - uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: image.tar
           retention-days: 1
+
       - name: Install Syft
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Generate SBOM
         id: sbom
         run: syft ${{ env.IMAGE_NAME }}:${{ github.sha }} -o cyclonedx-json=sbom.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ github.sha }}
