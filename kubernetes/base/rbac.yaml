@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-forge-app
+  namespace: vault-forge
+rules:
+  # Intentionally empty by default — the app needs no Kubernetes API access.
+  # Add narrowly-scoped rules here only if the app itself calls the API.
+  []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-forge-app
+  namespace: vault-forge
+subjects:
+  - kind: ServiceAccount
+    name: vault-forge-app
+    namespace: vault-forge
+roleRef:
+  kind: Role
+  name: vault-forge-app
+  apiGroup: rbac.authorization.k8s.io

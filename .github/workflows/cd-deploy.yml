@@ -1,0 +1,132 @@
+name: VaultForge CD - Deploy to Kubernetes
+
+on:
+  workflow_call:
+    inputs:
+      image_digest:
+        type: string
+        required: true
+      overlay:
+        type: string
+        default: dev
+      aws_region:
+        type: string
+        default: ap-south-1
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+      EKS_CLUSTER_NAME:
+        required: true
+
+concurrency:
+  group: vaultforge-deploy-${{ inputs.overlay }}
+  cancel-in-progress: false   # never cancel a deploy mid-rollout
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.overlay }})
+    runs-on: ubuntu-latest
+    # FIX: environment protection — requires manual approval before this job
+    # runs when `overlay: prod`. Configure required reviewers on the
+    # "production" GitHub Environment in repo settings.
+    environment: ${{ inputs.overlay == 'prod' && 'production' || 'development' }}
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+      issues: write
+    outputs:
+      rollout_result: ${{ steps.rollout.outcome }}
+      zap_result: ${{ steps.zap.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ inputs.aws_region }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Cosign verify (pre-deploy sanity check)
+        run: cosign verify ${{ inputs.image_digest }} --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Set image digest in kustomization
+        run: |
+          cd kubernetes/overlays/${{ inputs.overlay }}
+          kustomize edit set image vault-forge-app=${{ inputs.image_digest }}
+
+      - name: Deploy via Kustomize
+        run: kubectl apply -k kubernetes/overlays/${{ inputs.overlay }}
+
+      # Kyverno admission policies are cluster-side and enforce automatically
+      # on the `kubectl apply` above (block-privileged, require-non-root,
+      # require-resource-limits, verify-image-signature). If any policy
+      # rejects the manifest, this step surfaces it explicitly.
+      - name: Confirm Kyverno admission accepted the workload
+        run: kubectl get events -n vault-forge --field-selector reason=PolicyViolation --sort-by='.lastTimestamp' | tail -20 || true
+
+      - name: Wait for rollout
+        id: rollout
+        continue-on-error: true
+        run: kubectl rollout status deployment/vault-forge-app -n vault-forge --timeout=180s
+
+      - name: Rollback on failure
+        if: steps.rollout.outcome == 'failure'
+        run: |
+          echo "::error::Rollout failed — rolling back automatically"
+          kubectl rollout undo deployment/vault-forge-app -n vault-forge
+          exit 1
+
+      - name: Application health check
+        run: |
+          kubectl wait --for=condition=available --timeout=60s deployment/vault-forge-app -n vault-forge
+          SVC_IP=$(kubectl get svc vault-forge-app -n vault-forge -o jsonpath='{.spec.clusterIP}')
+          kubectl run curl-check --rm -i --restart=Never --image=curlimages/curl -- curl -sf http://$SVC_IP:8000/health
+
+      - name: Smoke tests
+        run: ./scripts/smoke-test.sh ${{ inputs.overlay }}
+
+      - name: Run ZAP baseline scan (DAST)
+        id: zap
+        continue-on-error: true
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://vault-forge-app.vault-forge.svc.cluster.local:8000'
+
+      # FIX: SARIF uploaded right after the tool that produces it, same as the CI workflow
+      - name: Upload ZAP SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: report_html.html
+          category: zap-dast
+        continue-on-error: true
+
+      - name: Create issue on DAST findings
+        if: steps.zap.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `ZAP DAST findings on ${{ inputs.overlay }} — ${context.sha.substring(0,7)}`,
+              body: `Baseline DAST scan reported findings against the ${{ inputs.overlay }} deployment.\nRun: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ["security", "dast", "automated"]
+            });
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "## VaultForge Deploy Summary (${{ inputs.overlay }})" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Rollout | ${{ steps.rollout.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ZAP DAST | ${{ steps.zap.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ inputs.image_digest }}\` |" >> $GITHUB_STEP_SUMMARY

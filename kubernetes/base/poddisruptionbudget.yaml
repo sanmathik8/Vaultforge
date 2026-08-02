@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vault-forge-app
+  namespace: vault-forge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: vault-forge-app

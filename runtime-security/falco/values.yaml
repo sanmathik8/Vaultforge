@@ -1,0 +1,29 @@
+# Helm values for falcosecurity/falco — runtime DaemonSet mode
+# (separate from the CI-mode Falco used inside ci-security.yml, which
+# monitors the build step itself).
+
+driver:
+  kind: ebpf   # no kernel module compile step; works on GitHub-hosted-like minimal nodes
+
+falco:
+  jsonOutput: true
+  jsonIncludeOutputProperty: true
+
+falcosidekick:
+  enabled: true
+  config:
+    slack:
+      webhookurl: "${FALCO_SLACK_WEBHOOK_URL}"
+      minimumpriority: "warning"
+
+customRules:
+  vault-forge-rules.yaml: |-
+    - rule: Unexpected outbound connection from vault-forge-app
+      desc: Detect the app container making connections outside expected egress
+      condition: >
+        outbound and container.name = "vault-forge-app"
+        and not fd.sip in (allowed_egress_ips)
+      output: >
+        Unexpected egress from vault-forge-app (command=%proc.cmdline connection=%fd.name)
+      priority: WARNING
+      tags: [network, vault-forge]

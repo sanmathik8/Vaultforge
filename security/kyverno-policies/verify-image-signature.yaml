@@ -1,0 +1,22 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signature
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: verify-cosign-signature
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["vault-forge"]
+      verifyImages:
+        - imageReferences:
+            - "*.dkr.ecr.*.amazonaws.com/vault-forge-app*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/sanmathik8/vault-forge/.github/workflows/*"
+                    issuer: "https://token.actions.githubusercontent.com"

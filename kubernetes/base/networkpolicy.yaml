@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-forge-app
+  namespace: vault-forge
+spec:
+  podSelector:
+    matchLabels:
+      app: vault-forge-app
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8000
+    # Allow the CI runner / ZAP baseline job to reach the service directly
+    # during DAST — scope this to your runner's namespace/CIDR in production.
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 443

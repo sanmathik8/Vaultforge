@@ -1,0 +1,79 @@
+name: VaultForge Infra - Terraform Bootstrap
+
+# FIX: Terraform for EKS/ECR/OIDC no longer runs on every app push. It only
+# runs on manual dispatch, or on a PR that actually touches terraform/, so
+# the cluster/registry lifecycle is decoupled from the app deploy cadence
+# and there's a plan-review step before anything is ever applied.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+  pull_request:
+    paths:
+      - 'terraform/**'
+
+concurrency:
+  group: vaultforge-terraform
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  iac-scan:
+    name: Checkov - Terraform IaC Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/bootstrap
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          soft_fail: true
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+  terraform:
+    name: Terraform ${{ github.event.inputs.action || 'plan' }}
+    needs: iac-scan
+    runs-on: ubuntu-latest
+    # FIX: environment protection — `apply` requires a manual approver,
+    # even though this workflow itself is already manually triggered.
+    environment: ${{ github.event.inputs.action == 'apply' && 'production' || '' }}
+    defaults:
+      run:
+        working-directory: terraform/bootstrap
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform init
+      - run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        if: github.event.inputs.action == 'apply'
+        run: terraform apply -auto-approve tfplan
