@@ -91,7 +91,8 @@ jobs:
           format: sarif
           output-file: hadolint.sarif
       - name: Upload Hadolint SARIF
-        if: always()
+        if: always() && hashFiles('hadolint.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: hadolint.sarif
@@ -121,7 +122,8 @@ jobs:
             -r
             ${{ env.APP_PATH }}
       - name: Upload OSV SARIF
-        if: always()
+        if: always() && hashFiles('osv-results.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: osv-results.sarif
@@ -146,17 +148,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Semgrep
         run: pip install semgrep
-      - name: Run Semgrep scan
-        id: semgrep
+      - name: Run Semgrep scan (SARIF)
+        id: semgrep-sarif
         continue-on-error: true
         run: |
           semgrep scan \
             --config=p/owasp-top-ten --config=p/django --config=p/python \
             --sarif --output=semgrep.sarif \
+            ${{ env.APP_PATH }} || true
+      - name: Run Semgrep scan (JSON)
+        id: semgrep-json
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config=p/owasp-top-ten --config=p/django --config=p/python \
             --json --output=semgrep.json \
-            ${{ env.APP_PATH }}
+            ${{ env.APP_PATH }} || true
       - name: Upload Semgrep SARIF
-        if: always()
+        if: always() && hashFiles('semgrep.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
@@ -170,7 +180,7 @@ jobs:
           echo "findings=$COUNT" >> "$GITHUB_OUTPUT"
           echo "critical=$CRIT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && hashFiles('semgrep.json') != ''
         with:
           name: semgrep-report
           path: semgrep.json
