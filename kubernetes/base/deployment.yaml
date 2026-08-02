@@ -6,6 +6,11 @@ metadata:
   labels:
     app: vault-forge-app
 spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: vault-forge-app
@@ -36,15 +41,19 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: vault-forge-app
-          image: vault-forge-app:placeholder   # replaced by `kustomize edit set image` in cd-deploy.yml
+          image: vault-forge-app:placeholder   # Replaced dynamically by `kustomize edit set image` in CD
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
+              name: http
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
           resources:
             requests:
               cpu: 100m
@@ -74,3 +83,6 @@ spec:
               port: 8000
             failureThreshold: 30
             periodSeconds: 5
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}

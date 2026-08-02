@@ -16,11 +16,11 @@
 - **EKS Control Plane Hardening**: Enabled full EKS control plane audit logging (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`) and configured node group `ebs_optimized = true`.
 - **IAM Least Privilege**: Scoped `sanmathik8/Vaultforge` OIDC repository parameters across all federated IAM role policies (`ecr_push`, `eks_deploy`, `terraform_bootstrap`).
 
-## Phase 4 — Monitoring, Observability & Runtime Security Audit
-- **Audit Result**: Full production readiness audit completed. Verified Prometheus target auto-discovery (`ServiceMonitor`), Alertmanager webhook routing, Grafana ConfigMap dashboard provisioning (`monitoring/dashboards-configmap.yaml`), Metrics Server HPA compatibility, and Falco eBPF DaemonSet runtime rules.
-- **Integration Hardening**:
-  - Updated `kubernetes/base/networkpolicy.yaml` to explicitly permit Ingress traffic from the `monitoring` namespace to `vault-forge-app` port 8000 for Prometheus metrics collection.
-  - Created `monitoring/dashboards-configmap.yaml` containing auto-mounting Grafana dashboard JSONs (`vault-forge-dashboards`).
+## Phase 4 — Kustomize Deployment Optimization & Auditing
+- **Deployment Strategy**: Added explicit zero-downtime `RollingUpdate` strategy (`maxSurge: 1`, `maxUnavailable: 0`).
+- **Ephemeral Storage & File Integrity**: Added non-root `emptyDir` volume mounted at `/tmp` to allow read-only root filesystems (`readOnlyRootFilesystem: true`) to operate without permission errors.
+- **Overlay Refactoring**: Cleaned up `kubernetes/overlays/dev/kustomization.yaml` and `kubernetes/overlays/prod/kustomization.yaml` to utilize native `commonAnnotations` transformers.
+- **Probe Differentiation**: Preserved distinct `livenessProbe` (`/`) and `readinessProbe` (`/health`) paths for `kube-score` compliance.
 
 ## Modular Enterprise Pipeline Refactoring
 
