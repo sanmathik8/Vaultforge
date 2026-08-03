@@ -13,7 +13,6 @@
       "name": "vault-forge-app",
       "image": "vault-forge-app:placeholder",
       "essential": true,
-      "user": "10001:10001",
       "portMappings": [
         {
           "containerPort": 8000,
@@ -21,7 +20,7 @@
           "protocol": "tcp"
         }
       ],
-      "readonlyRootFilesystem": true,
+      "readonlyRootFilesystem": false,
       "mountPoints": [
         {
           "sourceVolume": "tmp-dir",

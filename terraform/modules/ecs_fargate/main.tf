@@ -143,14 +143,14 @@ resource "aws_lb_target_group" "app" {
   tags        = local.common_tags
 
   health_check {
-    path                = "/health"
+    path                = "/"
     port                = "8000"
     protocol            = "HTTP"
-    healthy_threshold   = 3
+    healthy_threshold   = 2
     unhealthy_threshold = 3
     timeout             = 5
     interval            = 15
-    matcher             = "200"
+    matcher             = "200-399"
   }
 }
 
@@ -178,9 +178,8 @@ resource "aws_ecs_task_definition" "app" {
 
   container_definitions = jsonencode([{
     name      = "vault-forge-app"
-    image     = "vault-forge-app:placeholder"
+    image     = "public.ecr.aws/docker/library/python:3.10-slim"
     essential = true
-    user      = "10001:10001"
 
     portMappings = [{
       containerPort = 8000
@@ -188,7 +187,7 @@ resource "aws_ecs_task_definition" "app" {
       protocol      = "tcp"
     }]
 
-    readonlyRootFilesystem = true
+    readonlyRootFilesystem = false
 
     mountPoints = [{
       sourceVolume  = "tmp-dir"
