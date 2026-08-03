@@ -12,8 +12,6 @@ https://docs.djangoproject.com/en/3.0/ref/settings/
 
 import os
 
-import django_heroku
-
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -22,14 +20,14 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'lr66%-a!$km5ed@n5ug!tya5bv!0(yqwa1tn!q%0%3m2nh%oml'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'lr66%-a!$km5ed@n5ug!tya5bv!0(yqwa1tn!q%0%3m2nh%oml')
 
 SENSITIVE_DATA = 'FLAGTHATNEEDSTOBEFOUND'
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Production Security: Disable DEBUG unless explicitly enabled via environment
+DEBUG = os.environ.get("DEBUG", "False").lower() in ("true", "1")
 
-ALLOWED_HOSTS = ['pygoat.herokuapp.com', '0.0.0.0.']
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -46,10 +44,6 @@ INSTALLED_APPS = [
     'challenge.apps.ChallengeConfig',
     'crispy_forms',
     'crispy_bootstrap4',
-    'allauth',
-    'allauth.account',
-    'allauth.socialaccount',
-    'allauth.socialaccount.providers.google',
 ]
 
 MIDDLEWARE = [
@@ -142,31 +136,9 @@ CRISPY_TEMPLATE_PACK = 'bootstrap4'
 LOGIN_REDIRECT_URL='/'
 LOGOUT_REDIRECT_URL = '/'
 
-
-# Activate Django-Heroku.
-django_heroku.settings(locals())
-
-#Authentication Backend
-
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
-    'allauth.account.auth_backends.AuthenticationBackend'
 ]
 
-SITE_ID=3
-
-#Social Account Providers
-SOCIALACCOUNT_PROVIDERS = {
-    'google': {
-        'SCOPE': [
-            'profile',
-            'email',
-        ],
-        'AUTH_PARAMS': {
-            'access_type': 'online',
-        }
-    }
-}
-
 SECRET_COOKIE_KEY = "PYGOAT"
-CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:8000","http://0.0.0.0:8000","http://172.16.189.10"]
+CSRF_TRUSTED_ORIGINS = ["http://*", "https://*"]

@@ -1017,7 +1017,7 @@ def crypto_failure(request):
     if request.user.is_authenticated:
         return render(request,"Lab_2021/A2_Crypto_failur/crypto_failure.html",{"success":False,"failure":False})
     else:
-        redirect('login')
+        return redirect('login')
 
 def crypto_failure_lab(request):
     if request.user.is_authenticated:
@@ -1232,7 +1232,7 @@ def software_and_data_integrity_failure_lab2(request):
 
 @authentication_decorator
 def software_and_data_integrity_failure_lab3(request):
-    pass
+    return render(request,"Lab_2021/A8_software_and_data_integrity_failure/desc.html")
 
 ## --------------------------A6_discussion-------------------------------------------------------
 
