@@ -317,8 +317,22 @@ jobs:
         if: steps.check-secrets.outputs.configured == 'true'
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign image (keyless)
+      - name: Check Cosign Signature (Checkpoint Check)
+        id: cosign-check
         if: steps.check-secrets.outputs.configured == 'true'
+        run: |
+          TARGET_DIGEST="${{ steps.push.outputs.digest || needs.check-ecr-checkpoint.outputs.existing_digest }}"
+          echo "Checking if signature already exists for $TARGET_DIGEST..."
+          if cosign verify "$TARGET_DIGEST" --certificate-identity-regexp ".*" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" >/dev/null 2>&1; then
+            echo "already_signed=true" >> "$GITHUB_OUTPUT"
+            echo "### ⏩ Cosign Signature Checkpoint Hit" >> $GITHUB_STEP_SUMMARY
+            echo "Image \`${TARGET_DIGEST}\` is already signed via Cosign. Skipping duplicate signing." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "already_signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign image (keyless) if unsigned
+        if: steps.check-secrets.outputs.configured == 'true' && steps.cosign-check.outputs.already_signed != 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
@@ -326,7 +340,7 @@ jobs:
           echo "Signing container image digest \`${TARGET_DIGEST}\` via Cosign keyless OIDC..."
           cosign sign --yes "$TARGET_DIGEST"
 
-      - name: Verify Cosign Signature (Post-Sign Verification)
+      - name: Verify Cosign Signature (Final Verification)
         if: steps.check-secrets.outputs.configured == 'true'
         run: |
           TARGET_DIGEST="${{ steps.push.outputs.digest || needs.check-ecr-checkpoint.outputs.existing_digest }}"
