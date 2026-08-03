@@ -6,6 +6,8 @@
   ],
   "cpu": "256",
   "memory": "512",
+  "executionRoleArn": "EXECUTION_ROLE_ARN_PLACEHOLDER",
+  "taskRoleArn": "TASK_ROLE_ARN_PLACEHOLDER",
   "containerDefinitions": [
     {
       "name": "vault-forge-app",

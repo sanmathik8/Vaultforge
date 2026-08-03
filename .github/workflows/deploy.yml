@@ -215,12 +215,21 @@ jobs:
             echo "already_deployed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Render Task Definition with signed image digest
+      - name: Render Task Definition with signed image digest & execution roles
         if: steps.check-preconditions.outputs.configured == 'true' && steps.ecs-checkpoint.outputs.already_deployed != 'true'
         id: render-taskdef
         run: |
-          sed 's|"vault-forge-app:placeholder"|"${{ inputs.image_digest }}"|g' ecs/task-definition.json > rendered-taskdef.json
-          echo "Task definition rendered successfully"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          EXEC_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/vault-forge-ecs-execution-role"
+          TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/vault-forge-ecs-task-role"
+
+          jq --arg img "${{ inputs.image_digest }}" \
+             --arg exec "$EXEC_ROLE_ARN" \
+             --arg task "$TASK_ROLE_ARN" \
+             '.containerDefinitions[0].image = $img | .executionRoleArn = $exec | .taskRoleArn = $task' \
+             ecs/task-definition.json > rendered-taskdef.json
+
+          echo "Task definition rendered successfully with execution role $EXEC_ROLE_ARN"
 
       - name: Register ECS Task Definition
         if: steps.check-preconditions.outputs.configured == 'true' && steps.ecs-checkpoint.outputs.already_deployed != 'true'
