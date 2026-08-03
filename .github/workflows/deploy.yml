@@ -109,6 +109,10 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
           audience: sts.amazonaws.com
 
+      - name: Login to Amazon ECR
+        if: steps.check-preconditions.outputs.configured == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Multi-Tag Environment-Aware Infrastructure Discovery
         id: discover-infra
         if: steps.check-preconditions.outputs.configured == 'true'
