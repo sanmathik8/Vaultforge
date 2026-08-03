@@ -8,6 +8,7 @@ variable "environment" {
 resource "aws_ecr_repository" "app" {
   name                 = var.repo_name
   image_tag_mutability = "IMMUTABLE" # Prevents tag overwrites so signed image digests remain immutable
+  force_delete         = true        # Ensures teardowns/recreations succeed even when repository contains pushed images
   tags = {
     Project     = "VaultForge"
     Environment = var.environment
